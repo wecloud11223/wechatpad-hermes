@@ -159,6 +159,11 @@ Hermes dashboard 内嵌 **「云端社交聚合控制台」**（7 个页签）�
 账号导入 [云端社交聚合平台](https://cloud.juhe.chat) 后，在账号详情签发网关令牌
 （`wxa_…`，只完整展示一次；重新签发会让旧令牌失效）。
 
+扫码登录被要求人脸 / 安全验证时，走平台侧方案，插件不用改配置：
+
+- [Pad 人脸 / 滑块验证使用方案](docs/face-verify.md) — 第二台手机装 CA + 代理，完成人脸/滑块
+- [AID 住宅出口使用方案](docs/residential-egress.md) — 把登录出口固定到自己的公网主机
+
 ### 2. 安装插件
 
 ```bash
@@ -228,6 +233,15 @@ HERMES_HOME=~/.hermes hermes gateway restart
 | 同一消息重复投递 | `msgId` 去重（at-least-once） |
 | 媒体过大 / 读取失败 | 可读错误 + 降级，不阻塞事件循环 |
 
+## 平台侧能力
+
+以下能力都在**平台控制台**使用，插件侧不需要额外配置：
+
+| 方案 | 解决什么 | 入口 | 详细说明 |
+| --- | --- | --- | --- |
+| Pad 人脸 / 滑块验证 | iPad 协议扫码后被要求人脸识别或安全验证 | 控制台 → 帮助 → 人脸验证 | [docs/face-verify.md](docs/face-verify.md) |
+| AID 住宅出口 | 把扫码登录的网络出口固定到自己的公网主机 | 控制台 → 住宅出口 | [docs/residential-egress.md](docs/residential-egress.md) |
+
 ## 安全边界
 
 平台网关只开放业务面：控制面、回调注册、运行时管理等非业务接口由客户端本地预挡，
@@ -269,9 +283,13 @@ CI 在公开 runner 上只跑静态检查与敏感信息扫描；完整用例需
 | [docs/configuration.md](docs/configuration.md) | 环境变量与账号字段总表、控制台 |
 | [docs/architecture.md](docs/architecture.md) | 数据流、进程模型与错误路径 |
 | [docs/troubleshooting.md](docs/troubleshooting.md) | 常见故障定位 |
+| [docs/face-verify.md](docs/face-verify.md) | Pad 人脸 / 滑块验证使用方案（平台控制台） |
+| [docs/residential-egress.md](docs/residential-egress.md) | AID 住宅出口使用方案（平台控制台） |
 | [AGENTS.md](AGENTS.md) | 协作规范、git 自动同步、CI 说明 |
 
 ## 链接
 
 - 云端社交聚合平台：<https://cloud.juhe.chat>
+- [Pad 人脸 / 滑块验证](docs/face-verify.md)
+- [AID 住宅出口](docs/residential-egress.md)
 - 问题反馈：<https://github.com/wecloud11223/wechatpad-hermes/issues>
