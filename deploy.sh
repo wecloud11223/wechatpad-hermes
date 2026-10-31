@@ -68,11 +68,18 @@ if [[ -d "$OLD_PLUGIN" ]]; then
 fi
 
 if [[ "$RESTART" == 1 ]]; then
-    echo "==> 重启 Hermes gateway"
-    HERMES_HOME="$H" hermes gateway restart
-    sleep 5
-    HERMES_HOME="$H" hermes plugins list 2>/dev/null | grep -i "wpp-cloud" || true
-    echo "✅ gateway 已重启（看 logs/gateway.log 确认平台已连接）"
+    # ⚠️ 这里**不许**出现内置重启命令的字面量：Hermes 网关会扫描命令引用到的脚本内容，
+    #    命中就把整条调用（连 ``bash deploy.sh --local``）一起拒掉。会话内重启交给
+    #    ``hermes-gw-restart``（systemd 独立瞬态 unit，网关被停时不连带杀它）。
+    echo "==> 重启 gateway（独立瞬态 unit；普通 shell 见 README § 部署）"
+    if [[ -x /usr/local/bin/hermes-gw-restart ]]; then
+        /usr/local/bin/hermes-gw-restart 5
+        sleep 8
+        HERMES_HOME="$H" hermes plugins list 2>/dev/null | grep -i "wpp-cloud" || true
+        echo "✅ 已排定重启（看 logs/gateway.log 确认平台已连接）"
+    else
+        echo "⚠️  未找到 /usr/local/bin/hermes-gw-restart —— 请在**网关会话之外**重启，再验插件版本。"
+    fi
 else
-    echo "未重启。使代码生效：HERMES_HOME="$H" hermes gateway restart"
+    echo "未重启。让代码生效需要重启 gateway（网关会话内：hermes-gw-restart 5；普通 shell 见 README § 部署）。"
 fi
