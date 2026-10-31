@@ -155,6 +155,22 @@ def test_a_write_still_retries_an_edge_rejection(monkeypatch, sleeps):
     assert len(sleeps) == 1
 
 
+def test_the_upstream_marker_is_matched_case_insensitively(monkeypatch, no_sleep):
+    """真实 aiohttp 的头是大小写不敏感的 ``CIMultiDict``；普通 dict（小写键）也要认。
+
+    判据写错成精确匹配 ``X-Wpp-Token`` 时，头一到测试替身/代理的重写形态就"看不到"
+    ⇒ 透传的 503 被当成边缘拒绝 ⇒ 重发 ⇒ 对方多一条微信。
+    """
+    sess = _install_fake_aiohttp(
+        monkeypatch, [(503, "busy", {"x-wpp-token": "pub_test_01"}), _ok()])
+    client = WppClient(base_url="https://cloud.test/api/v1/gateway", authcode="wxa_test",
+                       cloud_mode=True, audit=False, send_allowlist=())
+    with pytest.raises(WppApiError) as ei:
+        asyncio.run(client.send_text("wxid_a", "hi"))
+    assert ei.value.code == "http_503"
+    assert sess.calls == 1
+
+
 def test_a_write_never_retries_a_500(monkeypatch, no_sleep):
     """★ 500 可能是"已执行但报错" —— 对写端点绝不重试。"""
     sess = _install_fake_aiohttp(monkeypatch, [(500, "boom"), _ok()])
