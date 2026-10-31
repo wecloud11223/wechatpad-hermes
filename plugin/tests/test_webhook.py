@@ -124,6 +124,20 @@ def test_a_missing_leading_slash_is_normalised():
     assert got.business == "/wechatpadpro/livetest/webhook/business"
 
 
+def test_a_missing_leading_slash_is_normalised_for_the_business_path_too():
+    """business 路径同样补前导 ``/`` —— 是同一种 404（注册相对路由 vs vendor 绝对 URL）。"""
+    got = derive_webhook_paths(LIVE_PATH, "", "custom/biz")
+    assert got.business == "/custom/biz"
+
+
+def test_business_never_gets_a_double_slash():
+    """配置里路径带尾斜杠时，派生出的 business 不能变成 ``/webhook//business``。"""
+    got = derive_webhook_paths("/wechatpadpro/livetest/webhook/", "")
+    assert got.business == "/wechatpadpro/livetest/webhook/business"
+    got = derive_webhook_paths("/wechatpadpro/livetest/webhook/", LIVE_TOKEN)
+    assert got.business == f"/wechatpadpro/{LIVE_TOKEN}/livetest/webhook/business"
+
+
 def test_derived_paths_are_a_named_tuple():
     got = derive_webhook_paths(LIVE_PATH, LIVE_TOKEN)
     assert isinstance(got, WebhookPaths)

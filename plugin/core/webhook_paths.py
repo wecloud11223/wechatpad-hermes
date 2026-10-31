@@ -67,10 +67,14 @@ def derive_webhook_paths(webhook_path: str = "", webhook_path_token: str = "",
         path = path.replace(_PREFIX, f"{_PREFIX}{token}/", 1) if _PREFIX in path \
             else f"{path.rstrip('/')}/{token}"
     business = (webhook_business_path or "").strip()
+    # 与主路径同一条理由（见上）：少写前导 ``/`` 的 business 路径会被注册成相对路由，
+    # 而 vendor 推过来的是绝对路径 ⇒ 入站 404，两边日志都干净。
+    if business and not business.startswith("/"):
+        business = "/" + business
     if token and path:
-        business = f"{path}/business"
+        business = f"{path.rstrip('/')}/business"
     elif not business:
-        business = f"{path}/business" if path else _FALLBACK_BUSINESS
+        business = f"{path.rstrip('/')}/business" if path else _FALLBACK_BUSINESS
     return WebhookPaths(webhook=path, business=business)
 
 
