@@ -200,7 +200,11 @@ def test_r4_one_bad_message_does_not_kill_the_batch():
     assert "_handle_one(" in src and "try:" in src and "except Exception" in src, \
         "直通那条没有单条保护（坏消息会把整批带崩）"
     assert "log.warning" in src, "吞了异常却不留痕"
-    assert "raise" not in src, "单条失败不许往上抛"
+    # 「不许往上抛」只针对**失败**分支：取消（``CancelledError``）必须原样重抛，
+    # 否则 ``stop()``/``disconnect()`` 的取消被吞掉，任务永远不会真正结束。
+    assert "except asyncio.CancelledError" in src, \
+        "取消没单独处理（要在释放去重键之后重抛）"
+    assert "raise" not in src.split("except Exception", 1)[-1], "单条失败不许往上抛"
 
 
 # ============================================================ §3 停机 / 热加载

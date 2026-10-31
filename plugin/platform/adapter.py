@@ -1515,11 +1515,20 @@ class WppAdapter(MediaMixin, WebhookMixin, BasePlatformAdapter):
         返回值（给 ``/Msg/Sync`` 兜底路径用）：``True``=处理完成、``False``=失败。
         失败时**释放去重键** —— ``_handle_one`` ②在开头就落了 ``msg_id`` 键，不释放的话
         重拉会被当成重复消息直接跳过，等于"以为会重试、实际永久丢"。
+        取消（停机/重连）走同一口径：在途派发被取消时游标不会前进，键也必须放回去，
+        否则重拉同样被 ② 挡掉 ⇒ 消息永久消失。
         """
         key = f"{acct.id}:{msg.msg_id}"
         try:
             await self._handle_one(acct, msg, pipeline)
             return True
+        except asyncio.CancelledError:
+            # 停机/重连会把在途的 ``trigger`` 取消，取消点可能落在本方法里。此时游标
+            # **没有**前进（下一轮会重拉同一条），但 ``_handle_one`` ② 已经落了去重键
+            # ⇒ 不释放就会被当成重复丢掉，而游标随后照走 ⇒ 这条消息永久消失。
+            # 与下面的失败分支同一口径：宁可重放一次，不留「以为处理过」的洞。
+            self._dedup.discard(key)
+            raise
         except Exception as exc:
             metrics.inc_handler_onerror()
             try:

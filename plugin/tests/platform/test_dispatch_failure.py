@@ -18,6 +18,7 @@
 
 from __future__ import annotations
 
+import asyncio
 from unittest.mock import AsyncMock, MagicMock
 
 import pytest
@@ -60,6 +61,24 @@ async def test_a_failed_dispatch_reports_false_and_releases_the_dedup_key():
     a._handle_one = AsyncMock(side_effect=RuntimeError("下游炸了"))
     ok = await a._dispatch_one(_acct(), _msg("m1"), MagicMock())
     assert ok is False, "失败被静默吞掉的话，SyncFallback 会照走游标 ⇒ 永久丢消息"
+    a._dedup.discard.assert_called_once_with("acct:m1")
+
+
+@pytest.mark.asyncio
+async def test_a_cancelled_dispatch_releases_the_dedup_key():
+    """★ 停机/重连取消在途派发 ⇒ 也必须释放去重键，否则重拉被当成重复 ⇒ 永久丢。
+
+    ``_handle_one`` ② 在**任何 await 之前**就落了 ``msg_id`` 键；而取消时游标没前进，
+    下一轮一定会重拉同一条。键不放回去，这条就被自己挡在门外，消息静默消失。
+    """
+    a = _adapter()
+
+    async def _cancelled(*_a, **_k):
+        raise asyncio.CancelledError
+
+    a._handle_one = _cancelled
+    with pytest.raises(asyncio.CancelledError):
+        await a._dispatch_one(_acct(), _msg("m1"), MagicMock())
     a._dedup.discard.assert_called_once_with("acct:m1")
 
 
