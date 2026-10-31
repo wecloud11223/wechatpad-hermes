@@ -13,6 +13,9 @@ from __future__ import annotations
 
 import asyncio
 import functools
+import json
+import tempfile
+from pathlib import Path
 
 import pytest
 
@@ -182,8 +185,35 @@ def _patch_account_store(monkeypatch, raw):
 
     writes = []
 
+    # ``update_account`` 会真的走跨进程锁 + 备份 + 原子写（这正是要测的那一段），
+    # 所以只打桩"读"不够：锁要 ``accounts/`` 目录存在、``_backup`` 要能拷到原文件。
+    # 以前这里只桩了 read/write 两个函数 ⇒ 在装了 ``fcntl`` 的 Linux 上必然抛
+    # ``AccountWriteError: 账号目录不存在``（3 条用例长期变红）。现在把账号路径与
+    # 备份目录一起指到临时目录，写路径仍是真实现。
+    base = Path(tempfile.mkdtemp(prefix="wpp-acct-"))
+    accounts = base / "accounts"
+    accounts.mkdir()
+    target = accounts / "acct.json"
+    target.write_text(json.dumps(raw, ensure_ascii=False), encoding="utf-8")
+
+    monkeypatch.setattr(account_store, "account_path", lambda _aid: target)
+    monkeypatch.setattr(account_store, "backup_dir", lambda: base / "backups")
     monkeypatch.setattr(account_store, "read_account_json",
                         lambda _aid: dict(raw))
+
+    # ``sync_once`` 走的是 ``update_account``（读 → mutate → 备份 → 原子写），
+    # 不经过 ``write_account_keys``。所以记录点必须挂在 ``update_account`` 上，
+    # 记的是**真正落盘那份数据**里的本次变更键 —— 打桩 ``write_account_keys``
+    # 只会得到空列表（那 3 条用例此前就是这样"红着但没人看"）。
+    original_update = account_store.update_account
+
+    def _spy(account_id, mutate, **kwargs):
+        data, mtime_ns = original_update(account_id, mutate, **kwargs)
+        keys = set(kwargs.get("changed_keys") or ())
+        writes.append((account_id, {k: data.get(k) for k in keys} if keys else dict(data)))
+        return data, mtime_ns
+
+    monkeypatch.setattr(account_store, "update_account", _spy)
     monkeypatch.setattr(account_store, "write_account_keys",
                         lambda aid, updates: writes.append((aid, updates)) or {})
     return writes
