@@ -22,7 +22,7 @@
   每个用例前清掉 `WECHATPRO_SEND_ALLOWLIST` / `WECHATPRO_ALLOWED_USERS` /
   `WECHATPRO_AUTHCODE` / `WECHATPRO_TOKEN_KEY` / `WPP_GATEWAY_TOKEN` 等生产凭证与
   白名单。此前这些值从启动 shell 漏进 `netguard.env_allowlist()` ⇒ 出站闸按生产群号
-  拦截 ⇒ `test_api_retry` 等 **11 条用例在生产机上恒红**；更隐蔽的是用例可能拿着生产
+  拦截 ⇒ `test_api_retry` 等 **14 条用例在生产机上恒红**；更隐蔽的是用例可能拿着生产
   authcode 构造 client（一旦真发请求就是在用生产凭据）。
 - **`test_unified_whitelist` 3 条长期红转绿**：夹具只打了 `read/write_account_keys` 的桩，
   而 `sync_once` 走的是 `account_store.update_account`（跨进程锁 + 备份 + 原子写）⇒
@@ -39,7 +39,7 @@
 - **`mask_secret` 短串全遮**：≤ 8 位的串留"头 4 尾 2"等于把整串还回去（控制台诊断
   接口会连 webhook URL 一起给出去）；现在整体 `****`，9 位起才留头尾。
 - **验证（本机，生产 env 未清理的 shell）**：`3064 passed, 10 skipped`（v3.1.0 时代为
-  `3055 passed, 10 skipped` + 3 条 `test_unified_whitelist` 红 + 11 条被生产 env 打红）；
+  `3055 passed, 10 skipped` + 3 条 `test_unified_whitelist` 红 + 14 条被生产 env 打红（test_api_retry 9 / test_wpp_cloud_client 3 / test_accounts 1 / test_security_hardening 1））；
   `ruff check plugin tools` 与 `scripts/check_public_tree.py`（280 文件）均通过。
 
 ---
