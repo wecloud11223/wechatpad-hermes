@@ -61,7 +61,7 @@ PROD_SELF_WXID = _local_prod_wxid()
 #: ``env_compat.gate_env`` / ``netguard.env_allowlist`` 漏进用例：
 #:
 #: * ``unified_allowlist()`` 读到生产群号 ⇒ 出站闸把 ``wxid_a`` 拦掉 ⇒
-#:   ``test_api_retry`` 等 11 条用例在"本来该绿"的机器上变红（2026-10-31 实测）；
+#:   ``test_api_retry`` 等 14 条用例在"本来该绿"的机器上变红（2026-10-31 实测）；
 #: * 更糟的是"不红但错"：用例拿着生产 authcode 去构造 client，一旦某条路径真的发了
 #:   请求，就是在用生产凭据打通话 —— 测试绝不该有这种可能。
 #:

@@ -4,6 +4,41 @@
 
 ---
 
+## v3.1.2 — 2026-10-31
+
+对 v3.1.1 的**复审收口**：两处「停机/重连会永久丢消息」的窗口，外加一条与真实响应头形态
+有关的判据钉死。没有新能力，全部是把"看起来对"变成"边界上也对"。
+
+- **取消在途派发时要释放去重键**：停机/重连会取消在途的 `trigger`，取消点可能落在
+  `_dispatch_one` 里。游标不前进（下一轮必然重拉同一条），但 `_handle_one` ② 在**任何
+  await 之前**就落了 `msg_id` 去重键 ⇒ 重拉被自己当成重复丢掉，游标随后照走 = **这条
+  消息永久消失**。现在 `CancelledError` 单独一支：释放键后原样重抛（与失败分支同一口径，
+  宁可重放一次）。用例 `test_a_cancelled_dispatch_releases_the_dedup_key`。
+- **`SyncFallback.stop()` 要等被取消的拉取真正收尾**：此前只 `cancel()` 不 `await`，
+  而 `disconnect()` 紧接着关 client、清 `_sync` —— 旧任务还能在已关闭的 client 上再跑
+  一段（刷错误、写坏游标）。现在 `stop()` 返回时 `in_flight` 为假、任务集合为空（当前
+  任务自身跳过，避免"等自己"死锁）。用例
+  `test_stop_waits_for_an_in_flight_pull_and_drops_its_pending_respawn`。
+- **`start()` 无条件复位 `_stopped`**：复位原本写在 `interval_s <= 0` 的提前 return
+  **之后** ⇒ "只靠推送触发、不开定时轮询"的账号一旦 `stop()` 过，重连后所有推送触发都被
+  静默丢弃（WS 看着还连着，现场只表现为"有些消息没人回"）。用例
+  `test_a_restarted_fallback_without_timers_still_accepts_triggers`。
+- **上游标记头大小写不敏感（钉住）**：`X-Wpp-Token` 在真实 aiohttp 里是
+  `CIMultiDict`（大小写不敏感），但测试替身/代理重写会给小写键。`_header_value` 本来就
+  两种都认，现在用 `test_the_upstream_marker_is_matched_case_insensitively` 锁住 ——
+  判据一旦退化成精确匹配，透传的 503 会被当成边缘拒绝 ⇒ 重发 ⇒ 对方多一条微信。
+- **结构门禁与文档口径校正**：`test_r4_one_bad_message_does_not_kill_the_batch` 原来
+  断言 `_dispatch_one` 里**任何** `raise` 都不许有，与"取消必须重抛"冲突；现在只断言
+  **失败分支**不抛，并要求取消单独成支。`conftest.py` 的「11 条被生产 env 打红」改成
+  实测的 14 条；`api_client` 模块 docstring 的 `:meth:` 引用改成模块级 `:func:`。
+- **验证**：`3068 passed, 10 skipped`；三条新用例在旧代码上**均红**（取消不释放键 /
+  `stop()` 不等待 / 重连后触发被静默丢弃），修复后转绿。`ruff check plugin tools` 与
+  `scripts/check_public_tree.py`（280 文件）通过。
+- **已知残留（未改，属另一项工作）**：非云端（vendor 直连）模式没有上游标记头 ⇒ 写端点
+  对 `408/429/503` 的一次重试仍建立在"厂商没执行"这个**假设**上（v3.1.0 口径），无法在
+  客户端侧证明；云端模式现在有 `X-Wpp-Token` 作证。另外，若回复**已发出**之后才抛错
+  （含取消），释放去重键会让重拉再回一次 —— 根治要入站 DB seen 门，不在本次范围。
+
 ## v3.1.1 — 2026-10-31
 
 对 v3.1.0 的**审阅收口**：一处会多发微信的边界、一处长期红着的测试夹具、一处漏掉的
