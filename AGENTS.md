@@ -39,6 +39,17 @@
 
   远端地址形如 `git@github-wecloud11223:wecloud11223/wechatpad-hermes.git`。
 
+## 🧪 CI 说明
+
+| job | 跑什么 | 说明 |
+| --- | --- | --- |
+| `static` | ruff + `compileall` + `scripts/check_public_tree.py` | 公开 runner 上恒绿，任何 PR 都跑 |
+| `tests` | `pytest plugin/tests` | **需要 Hermes 运行时**（`gateway` 包）。默认跳过（`HERMES_RUNTIME` 未设）；启用方式：在装了 Hermes 的 self-hosted runner 上把仓库变量 `HERMES_RUNTIME` 设为 `true` |
+
+完整业务用例在别人机器上跑不起来是**环境缺件**，不是代码坏了——本地跑法见
+`CONTRIBUTING.md` 的「测试约定」。新增用例请保持"只依赖标准库 + dev 依赖"，
+别把 CI 静态 job 也拖进 Hermes 依赖里。
+
 ## 🚫 铁律
 
 1. **不要在部署副本里改代码**：生产副本 `~/.hermes/plugins/wpp-cloud-platform/` 是

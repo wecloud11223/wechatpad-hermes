@@ -45,6 +45,19 @@ bash scripts/check.sh
 - 新增工具时同步更新 `plugin/plugin.yaml` 的 `provides_tools` 和
   `plugin/tests/test_registration.py` 的期望数量。
 
+## CI
+
+- `static`（ruff / compileall / 公开树扫描）在公开 runner 上恒跑；
+- `tests` 需要 Hermes 运行时，默认跳过，见 `AGENTS.md`「CI 说明」。
+
+本地完整跑法（装了 Hermes 的机器）：
+
+```bash
+PYTHONPATH="$HOME/.hermes/hermes-agent" python -m pytest plugin/tests -q
+```
+
+缺 `ruamel.yaml` / `pytest-asyncio` 时先装：`python -m pip install ruamel.yaml 'pytest-asyncio>=1,<2'`。
+
 ## 提交信息
 
 使用 Conventional Commits 风格，例如：
