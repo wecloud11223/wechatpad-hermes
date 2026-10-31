@@ -18,7 +18,7 @@
 ## 1. 最小配置
 
 ```dotenv
-WPP_CLOUD_GATEWAY_URL=https://wpp.example.com/api/v1/gateway
+WPP_CLOUD_GATEWAY_URL=https://cloud.juhe.chat/api/v1/gateway
 WPP_GATEWAY_TOKEN=wxa_...
 # 可选：WPP 控制台普通回调指向的本插件地址
 WECHATPRO_WEBHOOK_PUBLIC_URL=https://plugin.example.com
@@ -130,7 +130,7 @@ profile、两台机器或两个测试进程；否则两边会重复拉取同一�
 {
   "enabled": true,
   "cloudMode": true,
-  "apiBaseUrl": "https://wpp.example.com/api/v1/gateway",
+  "apiBaseUrl": "https://cloud.juhe.chat/api/v1/gateway",
   "gatewayTokenEnv": "WPP_GATEWAY_TOKEN",
   "agent": "wpp-wechat",
   "dmPolicy": "open",

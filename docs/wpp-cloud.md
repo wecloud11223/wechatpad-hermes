@@ -41,7 +41,7 @@ Hermes 平台名沿用 `wechatpadpro`（工具集、配置键、cron 投递变�
 最小 `.env`：
 
 ```dotenv
-WPP_CLOUD_GATEWAY_URL=https://wpp.example.com/api/v1/gateway
+WPP_CLOUD_GATEWAY_URL=https://cloud.juhe.chat/api/v1/gateway
 WPP_GATEWAY_TOKEN=wxa_xxxxxxxx
 # 可选：WPP 回调指向的本插件地址
 WECHATPRO_WEBHOOK_PUBLIC_URL=https://plugin.example.com
@@ -54,7 +54,7 @@ WECHATPRO_WEBHOOK_PUBLIC_URL=https://plugin.example.com
   "enabled": true,
   "cloudMode": true,
   "agent": "wpp-wechat",
-  "apiBaseUrl": "https://wpp.example.com/api/v1/gateway",
+  "apiBaseUrl": "https://cloud.juhe.chat/api/v1/gateway",
   "gatewayTokenEnv": "WPP_GATEWAY_TOKEN",
   "webhookPath": "/wechatpadpro/webhook",
   "webhookPathToken": "<随机串>",

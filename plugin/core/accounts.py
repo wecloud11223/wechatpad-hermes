@@ -525,7 +525,7 @@ def resolve(account_id: str, extra: dict[str, Any] | None = None) -> Account:
         if cloud_mode:
             raise AccountError(
                 f"账号 {account_id!r} 未配置 WPP Cloud 网关地址。请在账号 JSON 写 "
-                f"apiBaseUrl（如 https://wpp.example.com/api/v1/gateway），"
+                f"apiBaseUrl（如 https://cloud.juhe.chat/api/v1/gateway），"
                 f"或在 .env 设置 WPP_CLOUD_GATEWAY_URL。"
             )
         raise AccountError(

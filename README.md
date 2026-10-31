@@ -169,7 +169,7 @@ cp -r plugin ~/.hermes/plugins/wpp-cloud-platform
 `.env` / profile env：
 
 ```dotenv
-WPP_CLOUD_GATEWAY_URL=https://wpp.example.com/api/v1/gateway
+WPP_CLOUD_GATEWAY_URL=https://cloud.juhe.chat/api/v1/gateway
 WPP_GATEWAY_TOKEN=wxa_xxxxxxxx
 WECHATPRO_WEBHOOK_PUBLIC_URL=https://plugin.example.com
 ```
@@ -183,7 +183,7 @@ WECHATPRO_WEBHOOK_PUBLIC_URL=https://plugin.example.com
   "enabled": true,
   "cloudMode": true,
   "agent": "wpp-wechat",
-  "apiBaseUrl": "https://wpp.example.com/api/v1/gateway",
+  "apiBaseUrl": "https://cloud.juhe.chat/api/v1/gateway",
   "gatewayTokenEnv": "WPP_GATEWAY_TOKEN",
   "webhookPath": "/wechatpadpro/webhook",
   "webhookPathToken": "<随机串>",

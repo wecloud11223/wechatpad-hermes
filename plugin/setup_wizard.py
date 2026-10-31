@@ -671,7 +671,7 @@ def _collect_interactive(home: Path, env: dict[str, str], account: dict, force: 
         raise SystemExit("当前不是交互终端；请使用 --non-interactive（值从环境变量读取）")
 
     api_base = _prompt(
-        "WPP Cloud 网关地址（如 https://wpp.example.com/api/v1/gateway）",
+        "WPP Cloud 网关地址（如 https://cloud.juhe.chat/api/v1/gateway）",
         env.get(API_BASE_KEY) or str(account.get("apiBaseUrl") or ""))
     api_base = _normalize_api_base(api_base)
 

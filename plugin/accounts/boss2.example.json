@@ -2,7 +2,7 @@
   "_comment": "WPP Cloud 第二账号范例（多账号隔离）。复制为 accounts/<your_id>.json。每个账号必须使用独立 WPP 网关令牌、独立 selfWxid、独立 webhookPort，并绑定自己的 agent profile；agent 禁止写 main。凭据只写 *Env 名称，明文放对应 profile 的 .env。",
   "enabled": false,
   "cloudMode": true,
-  "apiBaseUrl": "https://wpp.example.com/api/v1/gateway",
+  "apiBaseUrl": "https://cloud.juhe.chat/api/v1/gateway",
   "gatewayToken": "",
   "gatewayTokenEnv": "WPP_GATEWAY_TOKEN_SECOND",
   "webhookHost": "127.0.0.1",
