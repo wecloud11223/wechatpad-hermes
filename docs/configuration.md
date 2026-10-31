@@ -1,0 +1,428 @@
+# 配置参考
+
+> ⚠️ 本分支（`wpp-cloud-platform`）**只适配 WPP Cloud 托管**。下文涉及
+> `WECHATPRO_AUTHCODE` / `tokenKey` / `wsUrl` / vendor 回调注册的段落属于旧
+> vendor 直连形态，仅作历史参考，不要用于新部署。WPP 模式的完整说明见
+> [`wpp-cloud.md`](wpp-cloud.md)。
+
+配置分两层：
+
+1. **环境变量**：`<HERMES_HOME>/.env`（单 profile）或
+   `<HERMES_HOME>/profiles/<name>/.env`（多 profile）。凭据、地址、webhook、数据库。
+2. **账号 JSON**：`<插件目录>/accounts/<id>.json`。白名单、群策略、模块开关、agent 绑定。
+
+只配环境变量也能启动：插件会合成一个 `default` 账号。需要多账号或细粒度策略时再写账号文件。
+
+---
+
+## 1. 最小配置
+
+```dotenv
+WPP_CLOUD_GATEWAY_URL=https://wpp.example.com/api/v1/gateway
+WPP_GATEWAY_TOKEN=wxa_...
+# 可选：WPP 控制台普通回调指向的本插件地址
+WECHATPRO_WEBHOOK_PUBLIC_URL=https://plugin.example.com
+# 可选：只读 MCP 工具；缺省由上面的网关地址推导为 https://<host>/mcp
+WPP_MCP_AUTHCODE=<pad authcode>
+```
+
+| 变量 | 必填 | 说明 |
+|---|---|---|
+| `WPP_CLOUD_GATEWAY_URL` | 是 | WPP 网关地址，必须以 `/api/v1/gateway` 结尾 |
+| `WPP_GATEWAY_TOKEN` | 是 | WPP 网关令牌 `wxa_...`（每托管账号一把；不是 vendor authcode） |
+| `WPP_CLOUD_MODE` | 否 | 本插件默认即 WPP 模式；显式置 `1` 可防止误配 |
+| `WPP_CLOUD_MCP_URL` | 否 | WPP Cloud MCP 地址；缺省从 `WPP_CLOUD_GATEWAY_URL` 去掉 `/api/v1/gateway` 后加 `/mcp` |
+| `WPP_MCP_AUTHCODE` | 否 | 只读 MCP 用的 pad authcode；配置后优先于账号 `authcode` |
+| `WECHATPRO_WEBHOOK_PUBLIC_URL` | 否 | 本插件 webhook 公网基址；留空退化为纯 `/Msg/Sync` 轮询 |
+
+⚠️ **一个网关令牌同一时间只能由一个插件实例轮询。** 不要把同一把令牌同时配到两个
+profile、两台机器或两个测试进程；否则两边会重复拉取同一账号的消息。
+
+---
+
+## 2. 环境变量总表
+
+### 连接与触发
+
+| 变量 | 默认 | 说明 |
+|---|---|---|
+| `WECHATPRO_AGENT` | profile 名 | 账号绑定的 Hermes profile；禁止 `main` |
+| `WECHATPRO_ALLOWED_USERS` | 空 | 允许私聊的用户，逗号分隔（`dmPolicy=allowlist` 时使用） |
+| `WECHATPRO_ALLOW_ALL_USERS` | `0` | `1` = 放行所有私聊/群消息（真实过滤仍在插件闸门）。**open / blacklist / pairing 模式必须为 `1`**，否则 Hermes 网关会先 default-deny；向导会自动写入 |
+| `WECHATPRO_HOME_CHANNEL` | 空 | cron / 通知默认目标，格式 `accountId:peerId` |
+| `WECHATPRO_HOME_CHANNEL_NAME` | 空 | 默认目标的显示名 |
+
+### webhook
+
+| 变量 | 默认 | 说明 |
+|---|---|---|
+| `WECHATPRO_WEBHOOK_PUBLIC_URL` | 空 | vendor 回调的公网基址；**必须显式配置** |
+| `WECHATPRO_WEBHOOK_HOST` | `127.0.0.1` | 本地监听地址 |
+| `WECHATPRO_WEBHOOK_SECRET` | 空 | HMAC v2 验签 secret；与 vendor 侧一致 |
+| `WPP_WEBHOOK_DEBUG` | `0` | 打印签名头，含凭据风险；验完立刻关 |
+| `WPP_WEBHOOK_MAX_SKEW_SEC` | 实现默认 | 时间戳允许偏移 |
+
+### 数据库（SQLite 默认，MySQL 可选）
+
+| 变量 | 默认 | 说明 |
+|---|---|---|
+| `WECHATPRO_DB_BACKEND` | `sqlite` | `sqlite` / `mysql`（也认 `mariadb` / `sqlite3`）；拼错直接报错 |
+| `WECHATPRO_SQLITE_PATH` | `<插件目录>/wpp.sqlite3` | SQLite 文件；`:memory:` 仅测试用 |
+| `WECHATPRO_DB_HOST` | `127.0.0.1` | 仅 MySQL；只允许本机，远程需显式 `WECHATPRO_DB_ALLOW_REMOTE=1` |
+| `WECHATPRO_DB_PORT` | `3306` | 仅 MySQL |
+| `WECHATPRO_DB_USER` / `WECHATPRO_DB_PASSWORD` | 空 | 仅 MySQL |
+| `WECHATPRO_DB_NAME` | 空 | 仅 MySQL；MySQL 模式下不配则该后端不可用（SQLite 模式忽略此项） |
+| `WECHATPRO_DB_CONNECT_TIMEOUT` / `_READ_TIMEOUT` / `_WRITE_TIMEOUT` | 实现默认 | 秒 |
+
+### OSS 媒体转存（可选，默认关闭）
+
+| 变量 | 默认 | 说明 |
+|---|---|---|
+| `WECHATPRO_OSS_ENABLED` | `0` | `1` 才启用；启用后媒体消息会带公网 URL |
+| `OSS_ACCESS_KEY_ID` / `OSS_ACCESS_KEY_SECRET` | 空 | OSS 凭据（只读，不写日志） |
+| `OSS_BUCKET` / `OSS_ENDPOINT` | 空 / 实现默认 | 桶名与 endpoint |
+| `OSS_CREDENTIALS_PATH` | 兼容回落 | 凭据文件路径（新版建议直接用上面的 env） |
+
+也需要本机安装 `ossutil` 与 `~/.ossutilconfig`（`ossutil` 自己读它鉴权）。
+缺任何一项只会让"这条消息不带 URL"，不影响收发。
+
+### LLM / 语音（可选）
+
+| 变量 | 说明 |
+|---|---|
+| `JUDGE_API_KEY` | 心流 / 好感度 / 黑话 / 风格学习共用的模型 key（也接受 `MINIMAX_CN_API_KEY` / `MINIMAX_API_KEY`） |
+| `JUDGE_BASE_URL` | 可选，自定义判定模型的兼容端点 |
+| `WECHATPRO_STT_API_KEY` | 语音转写 key（也接受 `SILICONFLOW_API_KEY`） |
+| `WPP_STT_BACKEND` | `siliconflow`（默认）或 `dashscope` |
+| `WPP_STT_URL` / `WPP_STT_MODEL` | 覆盖 STT 端点与模型 |
+| `WPP_SILK_DECODER_PATH` | 入站 silk 解码器，默认 `~/silk_decoder/silk/decoder` |
+| `WPP_SILK_ENCODER_PATH` | 出站 silk 编码器，默认 `~/silk_decoder/silk/encoder` |
+
+### 安全护栏
+
+| 变量 | 说明 |
+|---|---|
+| `WECHATPRO_SEND_ALLOWLIST` | 出站目标白名单；留空不限制 |
+| `WECHATPRO_PROTECTED_WXIDS` | 受保护的 bot wxid，逗号分隔；禁止被测试实例连接 |
+| `WECHATPRO_PROTECTED_FINGERPRINTS` | 受保护的凭据指纹（`sha256(authcode)[:12]`） |
+| `WECHATPRO_ALLOW_PRODUCTION_WXID` | `1` = 显式放行受保护 wxid（仅供生产实例） |
+| `WECHATPRO_ALLOW_GLOBAL_CREDENTIALS` | 允许回落到全局 `.env` 凭据 |
+| `WECHATPRO_ACCOUNTS_DIR` | 覆盖账号目录 |
+| `WECHATPRO_ACCOUNT_BACKUP_DIR` | 覆盖账号备份目录 |
+
+### 其他
+
+| 变量 | 说明 |
+|---|---|
+| `WECHATPRO_ACCOUNTS_JSON` | 内联账号表：`{"<id>": {"cloudMode": true, "gatewayToken": "wxa_...", "apiBaseUrl": "https://<host>/api/v1/gateway"}}` |
+| `WPP_CLOUD_MCP_URL` | WPP Cloud MCP 地址（默认由 `WPP_CLOUD_GATEWAY_URL` 推导为 `https://<host>/mcp`） |
+| `WPP_MCP_AUTHCODE` | 调 WPP Cloud MCP 用的 pad authcode（Bearer）；云端账号文件不含 authcode，**必填** |
+| `WECHATPRO_MCP_URL` | 旧 vendor MCP 地址；仅兼容旧部署，WPP 模式不要配 |
+| `WPP_PAIRING_DIR` | 私聊配对状态目录 |
+
+---
+
+## 3. 账号 JSON
+
+最小账号文件（`accounts/default.json`）：
+
+```json
+{
+  "enabled": true,
+  "cloudMode": true,
+  "apiBaseUrl": "https://wpp.example.com/api/v1/gateway",
+  "gatewayTokenEnv": "WPP_GATEWAY_TOKEN",
+  "agent": "wpp-wechat",
+  "dmPolicy": "open",
+  "groupPolicy": "open"
+}
+```
+
+**不要把明文网关令牌写进账号文件**，用 `gatewayTokenEnv` 指向 `.env` 里的
+`WPP_GATEWAY_TOKEN`。账号文件权限应为 `0600`。`authcode` / `tokenKey` / `wsUrl`
+在 cloud 模式下不生效，WPP 部署不应再写这些字段。
+
+完整范例见 `plugin/accounts/default.example.json` 与
+`plugin/accounts/boss2.example.json`。
+
+### 常用字段
+
+| 字段 | 默认 | 说明 |
+|---|---|---|
+| `enabled` | `true` | 是否连接该账号 |
+| `cloudMode` | 自动推断 | WPP 模式；本分支部署应显式写 `true` |
+| `apiBaseUrl` | 环境变量 | WPP 网关地址（`.../api/v1/gateway`） |
+| `gatewayToken` / `gatewayTokenEnv` | — | WPP 网关令牌明文或环境变量名 |
+| `selfWxid` | 空 | bot 自己的 wxid；留空由 WPP 返回 |
+| `nickname` | `微信助手` | 显示名，用于 @ 识别 |
+| `agent` | profile 名 | 绑定的 Hermes profile；禁止 `main` |
+| `dmPolicy` | `open` | 私聊准入：`open`（全部放行）/ `allowlist` / `blacklist` / `pairing` |
+| `allowFrom` | `[]` | 私聊白名单（`allowlist` 模式）；空列表 = 拒绝所有私聊 |
+| `blacklistUsers` | `[]` | 私聊黑名单；**任何模式**下都先拒 |
+| `groupPolicy` | `open` | `open` / `allowlist` / `blacklist` / `disabled` / `closed`（未知值 fail-closed） |
+| `groupAllowFrom` | `[]` | `allowlist` 模式下的群白名单；空列表 = 拒绝所有群 |
+| `adminUsers` | `[]` | 管理命令用户 |
+| `blacklistGroups` | `[]` | 永不处理的群（`blacklist` 模式或一票否决） |
+| `webhookHost` / `webhookPort` | `127.0.0.1` / `4398` | 每个账号端口必须不同 |
+| `webhookPath` / `webhookPathToken` | 实现默认 / 空 | 路径 token 是 webhook 的第一因素 |
+| `webhookSecretEnv` | 空 | WPP 回调 v2 HMAC secret 的环境变量名 |
+| `autoSetWebhook` | — | cloud 模式强制 `false`；字段可省略 |
+| `debounceMs` | `500` | 入站防抖窗口 |
+| `employeeGroupIds` | `[]` | 全员群；成员自动同步进 `allowFrom` |
+| `mcpEnabled` | `false` | 是否启用 WPP MCP 工具（必须显式 `true`） |
+
+### 准入模式
+
+**默认群聊、私聊全部放行。** 需要收紧时按账号选模式：
+
+| 模式 | 私聊 | 群聊 |
+|---|---|---|
+| `open`（默认） | 全部放行 | 全部放行 |
+| `allowlist` | 只放行 `allowFrom`；空 = 拒所有 | 只放行 `groupAllowFrom`；空 = 拒所有 |
+| `blacklist` | 放行除 `blacklistUsers` 外的人 | 放行除 `blacklistGroups` 外的群 |
+| `pairing` | 只放行已兑换配对码的用户 | — |
+| `disabled` / `closed` | — | 全部静默 |
+
+- 公众号（`gh_` 前缀）、微信团队、微信支付等服务通知**任何模式都不回复**。
+- 配对模式：管理员私聊发 `/genpair` 取码，用户发 `/pair <码>` 自助加入；
+  已配对名单在 `<插件目录>/pairing/<account>.paired.json`（0600）。
+- `open` / `blacklist` / `pairing` 的真实过滤由插件做；Hermes 网关侧仍需
+  `WECHATPRO_ALLOW_ALL_USERS=1` 才放行（向导自动写），否则消息到不了插件。
+
+### 可选模块
+
+每个模块都是独立开关，**默认关闭**（模型画像能力是其中唯一默认开启的子项）：
+
+```json
+{
+  "heartflow": {
+    "enabled": false,
+    "model": "your-judge-model",
+    "profile": {"enabled": true}
+  },
+  "embeddingModel": "text-embedding-v4",
+  "embeddingApiKeyEnv": "DASHSCOPE_API_KEY",
+  "affection": {"enabled": false, "model": "your-model"},
+  "jargon": {"enabled": false, "model": "your-model"},
+  "style": {"enabled": false, "model": "your-model"},
+  "tts": {"enabled": false, "provider": "tokenplan"},
+  "proactive": {"enabled": false, "allowFrom": []},
+  "debounceMerge": {"enabled": false, "maxChars": 2000},
+  "spectre": {"quoteHint": false},
+  "joinWelcome": {
+    "enabled": false,
+    "mode": "allowlist",
+    "groups": [],
+    "template": "欢迎 @{name} 加入{group}！",
+    "llmPolish": true,
+    "mention": true,
+    "quietHours": [],
+    "maxBatch": 3
+  }
+}
+```
+
+**`joinWelcome`（进群欢迎语）**：默认关闭；`mode` 取 `allowlist` / `blocklist` /
+`all`，未知值回落 `allowlist`。`{name}` 为新人昵称（多人用「、」连接），`{group}`
+为群名。`llmPolish` 只在有群画像时生效，失败回落模板原文；`maxBatch` 防止首次
+同步 / 清表把全群欢迎一遍。详见 [features.md](features.md#10-成员变动识别与进群欢迎语)。
+
+- **heartflow**：群聊里判断是否主动搭话，遵循白名单、预算、静默段。
+  启用时必须配置 `heartflow.model`；判定模型密钥走 `JUDGE_API_KEY`
+  （可选 `JUDGE_BASE_URL`，未设置时用实现默认端点）。
+- **heartflow.profile**：群画像 / 模型画像能力，**默认开启**；不需要时写
+  `"enabled": false`。
+- **向量模型**：用于群聊意图识别（挑选相关上下文），配 `embeddingModel` +
+  `embeddingApiKeyEnv`（指向 `.env` 里的 key，例如 `DASHSCOPE_API_KEY`），可选
+  `embeddingBaseUrl`。未配置时向量层关闭，自动退回 LLM 意图判断；不影响心流。
+- **affection**：好感度记账，影响 TTS 情绪路由。
+- **jargon**：群黑话（黑化）挖掘，写入数据库。
+- **style**：从群聊归纳说话风格，注入回复侧 system prompt。
+- **proactive**：私聊主动关心，`allowFrom` 为空时永不发送。
+- **debounceMerge**：合并突发私聊 / @ 消息。
+
+未配置模型或 key 时模块不启用，不会阻塞消息。
+
+---
+
+## 4. 多账号隔离
+
+每个账号必须满足：
+
+1. 独立 `accounts/<id>.json`；
+2. 独立 WPP 网关令牌（每个托管账号一把）；
+3. 独立 `selfWxid`；
+4. 独立 `webhookPort`；
+5. 独立 `agent` profile（不能是 `main`）。
+
+启动后插件会为每个账号建立独立客户端实例。webhook 路径按账号区分，端口冲突会直接报错。
+
+---
+
+## 5. webhook
+
+WPP Cloud 模式不建立 vendor WebSocket，入站：
+
+- **主路径**：WPP 控制台「普通回调」POST → 本插件本地 HTTP server。需要路径 token
+  **和** v2 HMAC secret（`X-Webhook-Signature`）。
+- **兜底**：`/Msg/Sync` 每 60 秒轮询；回调只推 `sync_message` 通知时也会立即触发一次。
+  v3.1.0 起：派发失败时本轮游标**不前进**（下一轮重拉失败条目；连续 3 轮仍失败则放弃
+  并记 ERROR），在途拉取期间的触发会在本轮结束立刻补拉，不会只等定时器。
+- **回调地址**：`GET /accounts/<id>/diagnostics` 的 `webhook_url` 给出可直接填进 WPP
+  控制台的地址（路径 token 已打码；明文用下文的 `cloud_callback_url` 打印）。
+
+公网部署时：
+
+```dotenv
+WECHATPRO_WEBHOOK_PUBLIC_URL=https://bot.example.com
+WECHATPRO_WEBHOOK_SECRET=<与 WPP 控制台回调 secret 一致>
+```
+
+反向代理需要把 `/wechatpadpro/...` 路径转发到 `WECHATPRO_WEBHOOK_HOST:webhookPort`。
+WPP 控制台填写的完整地址由 `Account.cloud_callback_url` 生成（含路径 token）。
+
+```bash
+python3 - <<'PY'
+from plugin.core import accounts
+print(accounts.resolve("default").cloud_callback_url)
+PY
+```
+
+---
+
+## 6. 数据库（SQLite 默认 / MySQL 可选）
+
+**默认使用 SQLite，无需安装数据库服务。** 数据落在
+`<插件目录>/wpp.sqlite3`（可用 `WECHATPRO_SQLITE_PATH` 改位置），首次启动自动建
+20 张表与索引。WAL 模式 + 5 秒 busy timeout，适合单机单进程的 Hermes 网关。
+
+SQLite 与 MySQL/MariaDB 是**功能等价的两个后端**：历史检索、心流台账、审计、
+黑话/风格/好感度持久化在 SQLite 下全部可用。MariaDB 只是“可选替代”，不是这些
+能力的前置依赖。
+
+需要 MariaDB/MySQL 时显式切换：
+
+```dotenv
+WECHATPRO_DB_BACKEND=mysql
+WECHATPRO_DB_HOST=127.0.0.1
+WECHATPRO_DB_PORT=3306
+WECHATPRO_DB_USER=wechatpro
+WECHATPRO_DB_PASSWORD=...
+WECHATPRO_DB_NAME=wechatpro
+```
+
+```sql
+CREATE DATABASE wechatpro CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci;
+CREATE USER 'wechatpro'@'127.0.0.1' IDENTIFIED BY '...';
+GRANT ALL PRIVILEGES ON wechatpro.* TO 'wechatpro'@'127.0.0.1';
+```
+
+- SQLite 与 MySQL 共用同一份 `schema.sql`；SQLite 侧在运行时做确定性方言翻译。
+- 首次连接自动建表；已有库只补齐缺列/缺索引，并做只读漂移检测，不改列、不删列。
+- 数据库连不上时消息收发、工具调用照常；历史检索、心流落库、审计、黑话/风格
+  持久化降级，启动日志会写明原因。
+- **已有 MySQL 部署升级时必须显式补 `WECHATPRO_DB_BACKEND=mysql`**，否则会切到
+  一个空 SQLite。
+- 测试请使用以 `_test` 结尾的库名，插件和测试护栏都会拒绝其他库名（SQLite 测试
+  只用临时文件）。
+
+---
+
+## 7. Web 控制台（可选）
+
+插件自带 Hermes dashboard 页签 `/wpp-console`，由 Hermes 官方插件机制加载
+（`dashboard/manifest.json` + `dashboard/plugin_api.py`），**不修改 Hermes 本体代码**。
+
+### 启用
+
+把 `wechatpadpro-console` 加入**运行 `wechatpadpro-platform` 的那个 profile** 的
+`plugins.enabled`。本机插件跑在 `wpp-wechat` profile 下：
+
+```yaml
+# $HERMES_HOME/profiles/wpp-wechat/config.yaml
+plugins:
+  enabled:
+    - wechatpadpro-platform
+    - wechatpadpro-console
+```
+
+如果平台插件装在 root/default profile，就把这一行加进 `$HERMES_HOME/config.yaml` 的
+`plugins.enabled`；页签只出现在启用了它的 profile 里。然后重启 `hermes-dashboard`
+（plugin_api 只在启动时挂载）与网关（加载账号文件 watcher）：
+
+```bash
+systemctl restart hermes-dashboard
+hermes-gw-restart
+```
+
+访问 dashboard 的「云端社交聚合控制台」页签。账号绑定在哪个 profile 不影响控制台——
+它直接读写 `accounts/*.json` 与插件数据库；在线状态快照优先读 profile home，缺失时
+回退到 launch home（网关进程始终写 launch home）。
+
+> 页签路径刻意用 `/wpp-console`，不要改成 `/wechatpadpro`：本插件自己的 webhook
+> 反代规则通常占用 `/wechatpadpro/` 前缀（vendor 回调），dashboard 又会把页签路径
+> 重定向成带尾斜杠的形式，两者相撞时页面会被转发到 webhook 端口并显示
+> `{"error":"unknown path"}`。
+
+### 次级 profile 的后端如何运行
+
+Hermes 会把次级 profile 的 `/api/plugins/wechatpadpro-console/*` 请求转发到**该
+profile 自己的 plugin host** 进程运行（PLG-3，与 launch profile 的 router 隔离），
+页签与接口都需要 profile 里这一条 enabled；没有启用的 profile 会得到 404。
+控制台不需要同时出现在 root profile；只要启用它的 profile 能访问到同一份
+`accounts/*.json` 与插件数据库即可。
+
+### 能做什么
+
+| 区域 | 内容 |
+|---|---|
+| 状态运维 | 全账号状态表、真实 WS 连接（`WppWsClient.connected`）、客户端就绪、最近热加载结果、快照新鲜度（`live` ≤15s / `delayed` ≤60s / `stale` / `unknown`）、DB/环境/凭据**仅存在性**体检、单账号与全账号手动热加载 |
+| 准入策略 | `dmPolicy`、`groupPolicy`、`allowFrom`、`blacklistUsers`、`groupAllowFrom`、`blacklistGroups`、`adminUsers`、`employeeDenyList`；配对码生成与已配对移除 |
+| 进群欢迎 | `enabled` / `mode` / `groups` / `template` / `llmPolish` / `mention` / `quietHours` / `maxBatch`（编辑值按 raw → 生效值回退，只提交变化键） |
+| 能力开关 | `heartflow` / `affection` / `jargon` / `style` / `tts` / `proactive` / `xiaoweiEnabled`，以及 `llmIntentEnabled` / `groupContextEnabled` / `mcpEnabled` / `friendCirclePublishEnabled` / `adminToolsEnabled` / `dmPairingEnabled` / `debounceMs` |
+| 群与成员 | 群列表搜索、排序（活跃/群名/成员数）、分页；白/黑名单快捷动作；群详情抽屉（成员搜索分页、24h 收发、心流/风格/好感度摘要） |
+| 消息分析 | 24h/7d 收发趋势、类型分布；按关键词/群/发送者/方向检索正文（本地库只读，分页） |
+| 心流运营 | 阈值/白名单/群画像开关编辑、判定与抑制统计、预算回填、群学习阈值、最近 50 条判定、风格卡与好感度只读 |
+
+**查询上限**：群列表 `limit ≤ 500`；成员 `limit ≤ 100`、`offset ≤ 5000`；消息检索
+`limit ≤ 50`、`offset ≤ 5000`、时间窗 `≤ 720h`（默认 168h）；分析时间窗
+`hours ≤ 168`；心流最近判定 50 条；好感度 Top 100。所有 GET 都是单表查询 +
+Python 合并，`Cache-Control: no-store`，每个 handler 用完关闭连接。
+
+**并发写入**：`PUT /accounts/{id}/{policy,join-welcome,features,heartflow}` 与
+`POST /accounts/{id}/groups/{gid}/policy` 接受可选的 `expected_mtime_ns`。
+服务端在账号文件锁内先比较 mtime，再执行 mutate；不匹配时返回 **409**，
+`detail = {code:"mtime_conflict", message, current_mtime_ns}`，文件字节不变。
+不传该字段时行为与旧版一致（不做并发检查）。群名单动作 `allow` / `deny` / `clear`
+分别把群加入 `groupAllowFrom` / `blacklistGroups` / 两边移除。
+
+**配对码**：`GET /accounts/{id}/pairing` 只返回是否有有效码、过期时间与已配对列表；
+`POST` 生成并在**响应里返回一次**配对码（文件 `0600`、目录 `0700`，码不写日志）；
+`DELETE /accounts/{id}/pairing/{wxid}` 从已配对列表移除。控制台只读写
+`$WPP_PAIRING_DIR`（默认 `<plugin>/pairing/`），必须与网关实例读取的是同一路径。
+
+**手动热加载**：`POST /accounts/{id}/reload` 只 `os.utime` 抬高账号文件 mtime，
+不改内容、不备份；网关 watcher 只扫描**已连接**账号，未连接时响应带 `warning`，
+全量入口为 `POST /ops/reload-all`。
+
+**消息正文**：检索只查插件本地 `wpp_messages`（`LIKE` 扫描，`%`/`_` 按字面值处理），
+不调用厂商接口、不写库。页面在 dashboard 登录态之后，正文仅管理员可见。
+
+### 生效方式
+
+- 保存后写账号 JSON（先备份、原子替换、`0600`，凭证键结构性不可写），网关每 **3 秒**
+  检查 `accounts/*.json` 的 mtime，变化则清内存覆盖并调用 `reload_account(id)`。
+- UI 会在状态快照的 `config_mtime_ns` 追上写入值后显示「已热加载」。
+- `enabled`、凭据、API 端点不在热加载范围，改动仍需重启网关。
+
+### 安全边界
+
+- 账号视图是**白名单**拼出来的：`authcode` / `tokenKey` / `webhookSecret` /
+  `webhookPathToken` 不出现在任何响应里；写入路径也会拒绝改动这些键。
+- 控制台**不调用厂商 API**、不触发 `/Msg/Sync`、不重连账号；在线状态来自网关写的
+  快照 `$HERMES_HOME/plugin-data/wechatpadpro/console-status.json`（0600）。
+- 群统计对插件数据库**只读**；每个 handler 用完即关连接，数据库不可用时返回
+  `db_available:false`，不影响策略与开关。
+- dashboard 进程没有网关的 `WECHATPRO_*`，控制台只从 `$HERMES_HOME/.env`（及
+  `profiles/*/.env`）预加载 **DB 相关**变量。root 与 `wpp-wechat` 的
+  `WECHATPRO_DB_*` 必须一致，否则控制台会查另一个库。

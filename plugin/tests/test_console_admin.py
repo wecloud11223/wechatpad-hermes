@@ -1,0 +1,526 @@
+"""Web 控制台纯逻辑 + 跨进程写锁（``plugin/core/console_admin.py``）。
+
+判据都下在**产出物**上：安全视图 JSON 里不出现凭据键、写回后的文件内容、
+快照字段。控制台最坏的失败形态是"页面显示保存成功，实际写坏/写了凭据"，
+所以这里对 ``account_store.update_account`` 也做一次真实落盘验证。
+"""
+from __future__ import annotations
+
+import json
+from pathlib import Path
+
+import pytest
+
+from plugin.core import account_store as S
+from plugin.core import console_admin as C
+from plugin.core import overrides as OV
+from plugin.data import repo_console
+
+SECRETS = {
+    "authcode": "SECRET-AUTHCODE",
+    "tokenKey": "SECRET-TOKEN",
+    "webhookSecret": "SECRET-HOOK",
+    "webhookPathToken": "SECRET-PATH",
+}
+
+
+def _raw(**over):
+    cfg = {
+        "agent": "wpp-wechat-test",
+        "enabled": True,
+        "nickname": "测试助手",
+        "selfWxid": "wxid_bot",
+        "dmPolicy": "allowlist",
+        "allowFrom": ["wxid_a", "wxid_b"],
+        "blacklistUsers": [],
+        "groupPolicy": "allowlist",
+        "groupAllowFrom": ["g1@chatroom"],
+        "blacklistGroups": [],
+        "adminUsers": ["wxid_a"],
+        "employeeGroupIds": ["g1@chatroom"],
+        "employeeAllowFrom": ["wxid_b"],
+        "debounceMs": 800,
+        "heartflow": {"enabled": False, "model": "m1", "replyThreshold": 0.6},
+        "affection": {"enabled": True},
+        "jargon": {"enabled": True},
+        "style": {"enabled": False},
+        "tts": {"enabled": False},
+        "proactive": {"enabled": False},
+        "xiaoweiEnabled": True,
+        "joinWelcome": {"enabled": True, "mode": "allowlist",
+                        "groups": ["g1@chatroom"], "template": "欢迎"},
+        "unknownKey": {"keep": [1, 2, 3]},
+        **SECRETS,
+    }
+    cfg.update(over)
+    return cfg
+
+
+@pytest.fixture
+def adir(tmp_path, monkeypatch):
+    d = tmp_path / "accounts"
+    d.mkdir()
+    monkeypatch.setenv("WECHATPRO_ACCOUNTS_DIR", str(d))
+    OV._runtime_overrides.clear()
+    yield d
+    OV._runtime_overrides.clear()
+
+
+@pytest.fixture
+def bdir(tmp_path, monkeypatch):
+    d = tmp_path / "backups"
+    monkeypatch.setenv(S.BACKUP_DIR_ENV, str(d))
+    return d
+
+
+# ------------------------------------------------------------------ 安全视图
+
+def test_safe_view_never_contains_credentials():
+    view = C.safe_account_view("default", _raw(), join_welcome_effective={"enabled": True})
+    blob = json.dumps(view, ensure_ascii=False)
+    for key in SECRETS:
+        assert key not in blob
+        assert SECRETS[key] not in blob
+    assert view["id"] == "default"
+    assert view["features"]["heartflow"] is False
+    assert view["features"]["xiaowei"] is True
+    assert view["heartflowModelConfigured"] is True
+
+
+def test_safe_view_keeps_raw_and_effective_join_welcome_separate():
+    view = C.safe_account_view(
+        "default", _raw(), join_welcome_effective={"template": "欢迎 {name}"})
+    assert view["joinWelcome"]["raw"]["template"] == "欢迎"
+    assert view["joinWelcome"]["effective"]["template"] == "欢迎 {name}"
+
+
+def test_safe_view_warnings_flag_allow_all_users_bypass():
+    view = C.safe_account_view("default", _raw(allowAllUsers=True, dmPolicy="allowlist"))
+    assert any("allowAllUsers" in w for w in view["warnings"])
+
+
+# ------------------------------------------------------------------ 策略
+
+def test_policy_rejects_unknown_enum_and_unknown_field():
+    with pytest.raises(C.ConsoleValidationError):
+        C.validate_policy({"dmPolicy": "everyone"})
+    with pytest.raises(C.ConsoleValidationError):
+        C.validate_policy({"botPolicy": "open"})
+
+
+def test_policy_normalizes_empty_dm_policy_to_open():
+    assert C.validate_policy({"dmPolicy": ""}) == {"dmPolicy": "open"}
+
+
+def test_policy_list_parsing_dedupes_and_validates_kind():
+    out = C.validate_policy({"allowFrom": "wxid_a, wxid_b\nwxid_a\n"})
+    assert out["allowFrom"] == ["wxid_a", "wxid_b"]
+    with pytest.raises(C.ConsoleValidationError):
+        C.validate_policy({"allowFrom": ["g1@chatroom"]})
+    with pytest.raises(C.ConsoleValidationError):
+        C.validate_policy({"groupAllowFrom": ["wxid_a"]})
+
+
+def test_policy_list_limits():
+    too_many = [f"wxid_{i}" for i in range(C.MAX_LIST_ITEMS + 1)]
+    with pytest.raises(C.ConsoleValidationError):
+        C.validate_policy({"allowFrom": too_many})
+    with pytest.raises(C.ConsoleValidationError):
+        C.validate_policy({"allowFrom": ["x" * (C.MAX_ITEM_LEN + 1)]})
+
+
+# ------------------------------------------------------------------ 进群欢迎
+
+def test_join_welcome_quiet_hours_must_be_int_array():
+    assert C.validate_join_welcome({"quietHours": [23, 0, 7, 7]})["quietHours"] == [0, 7, 23]
+    with pytest.raises(C.ConsoleValidationError):
+        C.validate_join_welcome({"quietHours": "23-7"})
+    with pytest.raises(C.ConsoleValidationError):
+        C.validate_join_welcome({"quietHours": [24]})
+
+
+def test_join_welcome_max_batch_and_template():
+    assert C.validate_join_welcome({"maxBatch": 1})["maxBatch"] == 1
+    assert C.validate_join_welcome({"maxBatch": "20"})["maxBatch"] == 20
+    with pytest.raises(C.ConsoleValidationError):
+        C.validate_join_welcome({"maxBatch": 0})
+    with pytest.raises(C.ConsoleValidationError):
+        C.validate_join_welcome({"maxBatch": 21})
+    with pytest.raises(C.ConsoleValidationError):
+        C.validate_join_welcome({"template": "  "})
+    with pytest.raises(C.ConsoleValidationError):
+        C.validate_join_welcome({"template": "x" * (C.MAX_TEMPLATE_LEN + 1)})
+
+
+def test_join_welcome_merge_keeps_unknown_sibling_keys():
+    merged = C.merge_join_welcome(
+        {"enabled": True, "unknownSibling": 1}, {"template": "hi"})
+    assert merged == {"enabled": True, "unknownSibling": 1, "template": "hi"}
+    with pytest.raises(C.ConsoleValidationError):
+        C.merge_join_welcome(["not", "a", "dict"], {"template": "hi"})
+
+
+# ------------------------------------------------------------------ 能力
+
+def test_feature_merge_keeps_section_keys_and_rejects_non_dict():
+    merged = C.merge_feature_section({"enabled": False, "replyThreshold": 0.6}, True)
+    assert merged == {"enabled": True, "replyThreshold": 0.6}
+    with pytest.raises(C.ConsoleValidationError):
+        C.merge_feature_section("bad", True)
+
+
+def test_features_require_bool_and_known_keys():
+    assert C.validate_features({"heartflow": True, "xiaoweiEnabled": False}) == {
+        "heartflow": True, "xiaoweiEnabled": False}
+    with pytest.raises(C.ConsoleValidationError):
+        C.validate_features({"heartflow": 1})
+    with pytest.raises(C.ConsoleValidationError):
+        C.validate_features({"nope": True})
+
+
+# ------------------------------------------------------------------ 状态
+
+def test_status_classify_thresholds():
+    now = 1_000_000
+    assert C.status_classify(now - 5, now)["state"] == "live"
+    assert C.status_classify(now - 30, now)["state"] == "delayed"
+    assert C.status_classify(now - 61, now)["state"] == "stale"
+    assert C.status_classify(None, now)["state"] == "unknown"
+    assert C.status_classify(now, now, missing=True)["state"] == "unknown"
+
+
+def test_snapshot_has_no_credentials_or_policy_values():
+    snap = C.build_status_snapshot(
+        profile="wpp-wechat", pid=123, started_at=1, connected=True, reason="running",
+        accounts={"default": {
+            "ws_connected": True, "ws_connected_once": True, "client_ready": True,
+            "config_mtime_ns": 42, "last_reload_at": 9, "last_reload_ok": True,
+            "last_reload_error": None, "authcode": SECRETS["authcode"],
+            "allowFrom": ["wxid_a"],
+        }}, now=100)
+    assert snap["schema"] == 1
+    assert snap["accounts"]["default"]["ws_connected"] is True
+    blob = json.dumps(snap, ensure_ascii=False)
+    assert SECRETS["authcode"] not in blob
+    assert "allowFrom" not in blob
+    assert "wxid_a" not in blob
+
+
+# ------------------------------------------------------- 真实落盘（跨进程锁）
+
+def test_update_account_reads_fresh_disk_state(adir, bdir):
+    path = adir / "default.json"
+    path.write_text(json.dumps(_raw(), ensure_ascii=False), encoding="utf-8")
+
+    # 模拟"另一个写入者"刚改完 allowFrom：mutator 必须看到这次改动。
+    S.write_account_key("default", "allowFrom", ["wxid_new"])
+
+    seen = {}
+
+    def _mutate(data):
+        seen.update(data)
+        data["groupAllowFrom"] = ["g2@chatroom"]
+        return data
+
+    updated, mtime_ns = S.update_account("default", _mutate)
+    assert seen["allowFrom"] == ["wxid_new"]
+    assert updated["groupAllowFrom"] == ["g2@chatroom"]
+    on_disk = json.loads(path.read_text(encoding="utf-8"))
+    assert on_disk["groupAllowFrom"] == ["g2@chatroom"]
+    assert on_disk["allowFrom"] == ["wxid_new"]
+    assert on_disk["unknownKey"] == {"keep": [1, 2, 3]}
+    assert on_disk["authcode"] == SECRETS["authcode"]
+    assert mtime_ns == path.stat().st_mtime_ns
+    # 锁文件在 accounts/.locks 下（不污染账号文件本身）
+    assert (adir / ".locks" / "default.lock").is_file()
+
+
+def test_update_account_rejects_credential_change(adir, bdir):
+    path = adir / "default.json"
+    path.write_text(json.dumps(_raw(), ensure_ascii=False), encoding="utf-8")
+    before = path.read_text(encoding="utf-8")
+
+    def _mutate(data):
+        data["authcode"] = "hacked"
+        return data
+
+    with pytest.raises(S.AccountWriteError):
+        S.update_account("default", _mutate)
+    assert path.read_text(encoding="utf-8") == before
+
+
+def test_update_account_skip_if_unchanged_writes_no_backup(adir, bdir):
+    path = adir / "default.json"
+    path.write_text(json.dumps(_raw(), ensure_ascii=False), encoding="utf-8")
+    S.update_account("default", lambda d: d, skip_if_unchanged=True)
+    assert not bdir.exists() or not list(bdir.iterdir())
+
+
+def test_update_account_expected_mtime_success(adir, bdir):
+    path = adir / "default.json"
+    path.write_text(json.dumps(_raw(), ensure_ascii=False), encoding="utf-8")
+    expected = int(path.stat().st_mtime_ns)
+
+    updated, mtime_ns = S.update_account(
+        "default", lambda d: {**d, "allowFrom": ["wxid_z"]},
+        expected_mtime_ns=expected)
+    assert updated["allowFrom"] == ["wxid_z"]
+    assert mtime_ns == path.stat().st_mtime_ns
+
+
+def test_update_account_js_rounded_expected_mtime_is_accepted(adir, bdir):
+    """浏览器 JSON.parse 会把 1.79e18 的纳秒 mtime 舍入成 double。
+
+    回传值与盘上值差几十到上百纳秒，**不是并发冲突**；精确比对会让控制台
+    每次保存都 409（2026-10-27 真实故障）。
+    """
+    path = adir / "default.json"
+    path.write_text(json.dumps(_raw(), ensure_ascii=False), encoding="utf-8")
+    real = int(path.stat().st_mtime_ns)
+    js_rounded = int(float(real))       # 与 JS Number 的舍入一致
+    assert js_rounded != real           # 复现前提：纳秒值超过 2**53
+
+    updated, _ = S.update_account(
+        "default", lambda d: {**d, "allowFrom": ["wxid_js"]},
+        expected_mtime_ns=js_rounded)
+    assert updated["allowFrom"] == ["wxid_js"]
+
+
+def test_update_account_stale_expected_mtime_conflicts_without_writing(adir, bdir):
+    path = adir / "default.json"
+    path.write_text(json.dumps(_raw(), ensure_ascii=False), encoding="utf-8")
+    before = path.read_text(encoding="utf-8")
+    stale = int(path.stat().st_mtime_ns) - 1_000_000_000
+
+    calls = []
+
+    def _mutate(data):
+        calls.append(1)
+        data["allowFrom"] = ["wxid_hacked"]
+        return data
+
+    with pytest.raises(S.AccountConflictError) as excinfo:
+        S.update_account("default", _mutate, expected_mtime_ns=stale)
+    assert excinfo.value.current_mtime_ns == path.stat().st_mtime_ns
+    assert calls == []                      # 冲突发生在 mutate 之前
+    assert path.read_text(encoding="utf-8") == before
+    assert not bdir.exists() or not list(bdir.iterdir())
+
+
+def test_update_account_credential_check_wins_even_with_matching_mtime(adir, bdir):
+    path = adir / "default.json"
+    path.write_text(json.dumps(_raw(), ensure_ascii=False), encoding="utf-8")
+    expected = int(path.stat().st_mtime_ns)
+
+    def _mutate(data):
+        data["tokenKey"] = "hacked"
+        return data
+
+    with pytest.raises(S.AccountWriteError):
+        S.update_account("default", _mutate, expected_mtime_ns=expected)
+    assert json.loads(path.read_text(encoding="utf-8"))["tokenKey"] == SECRETS["tokenKey"]
+
+
+# ------------------------------------------------------------- 群统计总量
+
+class _FakeConn:
+    def __init__(self, rooms, members, share):
+        self._rooms = rooms
+        self._members = members
+        self._share = share
+        self.queries = []
+
+    def query(self, sql, params=()):
+        self.queries.append(sql)
+        if "wpp_chatrooms" in sql:
+            return self._rooms
+        if "wpp_chatroom_members" in sql:
+            return self._members
+        return []
+
+
+def test_features_advanced_toggles_and_debounce_bounds():
+    out = C.validate_features({
+        "llmIntentEnabled": True, "groupContextEnabled": False,
+        "debounceMs": C.MAX_DEBOUNCE_MS,
+    })
+    assert out == {"llmIntentEnabled": True, "groupContextEnabled": False,
+                   "debounceMs": C.MAX_DEBOUNCE_MS}
+    assert C.validate_features({"debounceMs": 0}) == {"debounceMs": 0}
+    for bad in (True, -1, C.MAX_DEBOUNCE_MS + 1, "abc"):
+        with pytest.raises(C.ConsoleValidationError):
+            C.validate_features({"debounceMs": bad})
+    with pytest.raises(C.ConsoleValidationError):
+        C.validate_features({"mcpEnabled": "yes"})
+
+
+def test_advanced_view_defaults_false():
+    assert C.advanced_view({}) == {key: False for key in C.ADVANCED_FEATURE_KEYS}
+    assert C.advanced_view({"mcpEnabled": True})["mcpEnabled"] is True
+
+
+def test_heartflow_view_fallback_and_explicit_threshold():
+    view = C.heartflow_config_view({"heartflow": {"enabled": True, "model": "m1"}})
+    assert view["replyThreshold"] == C.HF_THRESHOLD_FALLBACK
+    assert view["thresholdExplicit"] is False
+    assert view["modelConfigured"] is True
+    assert view["profileEnabled"] is True
+    assert "model" not in view
+    explicit = C.heartflow_config_view(
+        {"heartflow": {"replyThreshold": "0.72", "model": "m1",
+                       "whitelistGroups": ["g1@chatroom", "", 3]}})
+    assert explicit["replyThreshold"] == 0.72
+    assert explicit["thresholdExplicit"] is True
+    assert explicit["whitelistGroups"] == ["g1@chatroom", "3"]
+
+
+def test_validate_heartflow_partial_and_rejects_bad_values():
+    assert C.validate_heartflow({"replyThreshold": 0.55}) == {"replyThreshold": 0.55}
+    assert C.validate_heartflow({"whitelistGroups": ["g1@chatroom"]}) == {
+        "whitelistGroups": ["g1@chatroom"]}
+    assert C.validate_heartflow({"profileEnabled": False}) == {"profileEnabled": False}
+    for bad in ({"replyThreshold": True}, {"replyThreshold": "x"},
+                {"replyThreshold": 1.2}, {"replyThreshold": -0.1},
+                {"whitelistGroups": ["wxid_a"]},
+                {"profileEnabled": 1}, {"other": 1}, {}):
+        with pytest.raises(C.ConsoleValidationError):
+            C.validate_heartflow(bad)
+
+
+def test_merge_heartflow_preserves_model_weights_and_profile_caption():
+    existing = {"enabled": True, "model": "m1", "weights": {"a": 1},
+                "profile": {"enabled": True, "caption": "字幕", "minMsgs": 5}}
+    merged = C.merge_heartflow(existing, {"replyThreshold": 0.7, "profileEnabled": False})
+    assert merged["replyThreshold"] == 0.7
+    assert merged["model"] == "m1"
+    assert merged["weights"] == {"a": 1}
+    assert merged["profile"] == {"enabled": False, "caption": "字幕", "minMsgs": 5}
+    # 输入不被就地修改
+    assert existing["profile"]["enabled"] is True
+    with pytest.raises(C.ConsoleValidationError):
+        C.merge_heartflow(["bad"], {"replyThreshold": 0.7})
+
+
+def test_merge_group_policy_allow_deny_clear_and_idempotence():
+    allow, black = C.merge_group_policy(["g1@chatroom"], ["g2@chatroom"],
+                                        "g2@chatroom", "allow")
+    assert allow == ["g1@chatroom", "g2@chatroom"] and black == []
+    # 幂等：再来一次结果不变
+    assert C.merge_group_policy(allow, black, "g2@chatroom", "allow") == (allow, black)
+    allow, black = C.merge_group_policy(["g1@chatroom"], [], "g1@chatroom", "deny")
+    assert allow == [] and black == ["g1@chatroom"]
+    allow, black = C.merge_group_policy(["g1@chatroom"], ["g2@chatroom"],
+                                        "g1@chatroom", "clear")
+    assert allow == [] and black == ["g2@chatroom"]
+    # 盘上历史脏项被静默丢弃，但非法的新 gid / action 拒绝
+    assert C.merge_group_policy(["junk", "g1@chatroom"], [], "g1@chatroom", "allow") == (
+        ["g1@chatroom"], [])
+    with pytest.raises(C.ConsoleValidationError):
+        C.merge_group_policy([], [], "not-a-group", "allow")
+    with pytest.raises(C.ConsoleValidationError):
+        C.merge_group_policy([], [], "g1@chatroom", "block")
+
+
+def test_validate_page_hours_direction_clamp():
+    assert C.validate_page(999, -5) == (200, 0)
+    assert C.validate_page(0, 999999) == (1, 5000)
+    assert C.validate_page(10, 20, max_limit=50, max_offset=100) == (10, 20)
+    assert C.validate_hours(0) == 1
+    assert C.validate_hours(9999) == 720
+    assert C.validate_direction("INBOUND") == "inbound"
+    assert C.validate_direction("") == ""
+    with pytest.raises(C.ConsoleValidationError):
+        C.validate_direction("both")
+
+
+def test_safe_view_includes_advanced_and_heartflow_without_model_name():
+    view = C.safe_account_view("default", _raw(heartflow={
+        "enabled": True, "model": "secret-model", "replyThreshold": 0.7}))
+    assert view["advanced"]["mcpEnabled"] is False
+    assert view["heartflow"]["enabled"] is True
+    assert view["heartflow"]["replyThreshold"] == 0.7
+    assert "secret-model" not in json.dumps(view, ensure_ascii=False)
+
+
+def test_account_status_view_whitelists_fields():
+    snap = {"written_at": 1_000_000, "accounts": {"default": {
+        "ws_connected": True, "ws_connected_once": True, "client_ready": True,
+        "config_mtime_ns": 42, "last_reload_at": 9, "last_reload_ok": False,
+        "last_reload_error": "boom", "authcode": SECRETS["authcode"],
+        "allowFrom": ["wxid_a"]}}}
+    view = C.account_status_view(snap, "default", now=1_000_005)
+    assert view["state"] == "live" and view["age_sec"] == 5
+    assert view["ws_connected"] is True and view["last_reload_ok"] is False
+    blob = json.dumps(view, ensure_ascii=False)
+    assert SECRETS["authcode"] not in blob and "wxid_a" not in blob
+    missing = C.account_status_view(None, "default")
+    assert missing["state"] == "unknown" and missing["ws_connected"] is False
+
+
+def test_account_status_view_cloud_mode_uses_gateway_ready():
+    snap = {"written_at": 1_000_000, "accounts": {"cloud": {
+        "ws_connected": False, "client_ready": True, "config_mtime_ns": 7}}}
+    view = C.account_status_view(snap, "cloud", now=1_000_002, cloud_mode=True)
+    assert view["cloud_mode"] is True
+    assert view["transport"] == "cloud_gateway"
+    assert view["gateway_ready"] is True
+    # 厂商 WS 未连不算异常；连接口径 = 网关客户端就绪。
+    assert view["ws_connected"] is False
+    assert view["connected"] is True
+
+
+def test_diagnostics_checks_cloud_mode_skips_ws_and_token_key():
+    checks = C.diagnostics_checks(
+        db_ok=True, snapshot_state="live", ws_connected=False,
+        authcode_present=False, token_key_present=False,
+        cloud_mode=True, gateway_ready=True, gateway_token_present=True)
+    by_id = {c["id"]: c for c in checks}
+    assert "ws" not in by_id and "authcode" not in by_id and "tokenKey" not in by_id
+    assert by_id["transport"]["level"] == "ok"
+    assert by_id["gateway"]["level"] == "ok"
+    assert by_id["gatewayToken"]["ok"] is True
+
+    degraded = C.diagnostics_checks(
+        db_ok=True, snapshot_state="live", cloud_mode=True,
+        gateway_ready=False, gateway_token_present=False)
+    warn = {c["id"]: c for c in degraded}
+    assert warn["gateway"]["level"] == "warn"
+    assert warn["gatewayToken"]["level"] == "error"
+
+
+def test_diagnostics_checks_levels():
+    checks = C.diagnostics_checks(
+        db_ok=False, db_error="DbUnavailable", snapshot_state="stale",
+        ws_connected=False, authcode_present=False, token_key_present=True,
+        allow_all_users=True, dm_policy="allowlist", heartflow_enabled=True,
+        heartflow_model_configured=False)
+    by_id = {c["id"]: c for c in checks}
+    assert by_id["db"]["level"] == "error"
+    assert by_id["snapshot"]["level"] == "warn"
+    assert by_id["ws"]["level"] == "warn"
+    assert by_id["authcode"]["ok"] is False
+    assert by_id["allowAllUsers"]["level"] == "warn"
+    assert by_id["heartflowModel"]["level"] == "error"
+
+
+def test_group_activity_totals_count_all_groups(monkeypatch):
+    repo_console.clear_cache()
+    conn = _FakeConn(
+        rooms=[{"chatroom_id": "g1@chatroom", "nickname": "群一", "remark": None,
+                "member_count": 10, "last_synced_at": None}],
+        members=[{"chatroom_id": "g1@chatroom", "n": 9}],
+        share=[{"gid": "g1@chatroom", "direction": "inbound", "n": 3},
+               {"gid": "g1@chatroom", "direction": "outbound", "n": 2},
+               {"gid": "g2@chatroom", "direction": "inbound", "n": 5}],
+    )
+    monkeypatch.setattr(repo_console.db, "get_conn", lambda: conn)
+    monkeypatch.setattr(repo_console.db, "close", lambda: None)
+    monkeypatch.setattr(repo_console.repo_messages, "list_bot_msg_share",
+                        lambda aid, since, conn=None: conn._share)
+
+    res = repo_console.list_group_activity("default", since_hours=24, limit=10)
+    assert res["totals"] == {"inbound": 8, "outbound": 2}
+    assert res["truncated"] is False
+    # 只有消息、没有群档案的 g2 也要出现（否则活跃群在控制台"消失"）
+    g2 = [g for g in res["groups"] if g["chatroom_id"] == "g2@chatroom"]
+    assert g2 and g2[0]["inbound"] == 5 and g2[0]["name"] == ""

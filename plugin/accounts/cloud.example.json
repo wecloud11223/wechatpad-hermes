@@ -1,0 +1,43 @@
+{
+  "_comment": "WPP Cloud 单账号最小配置。复制为 accounts/default.json 后按需修改。凭据只写 *Env 名称，明文放 <HERMES_HOME>/.env（0600）。cloudMode=true 时：出站走 https://<host>/api/v1/gateway + Bearer wxa_...；入站由 WPP 控制台的普通回调（填 cloud_callback_url）触发 + /Msg/Sync 拉取；不建立 vendor WS，也不向 vendor 注册 /Webhook/*。",
+  "enabled": true,
+  "cloudMode": true,
+  "apiBaseUrl": "https://wpp.example.com/api/v1/gateway",
+  "gatewayToken": "",
+  "gatewayTokenEnv": "WPP_GATEWAY_TOKEN",
+  "webhookHost": "127.0.0.1",
+  "webhookPort": 4398,
+  "webhookPath": "/wechatpadpro/webhook",
+  "webhookPathToken": "replace-with-a-random-token",
+  "webhookPublicUrl": "https://your-plugin-host.example",
+  "webhookSecret": "",
+  "selfWxid": "",
+  "nickname": "微信助手",
+  "dmPolicy": "open",
+  "allowFrom": [],
+  "blacklistUsers": [],
+  "groupPolicy": "open",
+  "groupAllowFrom": [],
+  "blacklistGroups": [],
+  "adminUsers": [],
+  "mcpEnabled": false,
+  "agent": "wpp-wechat",
+  "debounceMs": 500,
+  "heartflow": {
+    "enabled": false,
+    "profile": {
+      "enabled": true
+    }
+  },
+  "embeddingModel": "text-embedding-v4",
+  "embeddingApiKeyEnv": "DASHSCOPE_API_KEY",
+  "affection": {
+    "enabled": false
+  },
+  "jargon": {
+    "enabled": false
+  },
+  "style": {
+    "enabled": false
+  }
+}

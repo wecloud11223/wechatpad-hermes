@@ -1,0 +1,52 @@
+# 缓存
+__pycache__/
+*.pyc
+*.pyo
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+
+# 日志 / 临时
+*.log
+*.tmp
+*.orig
+*.rej
+
+# 默认 SQLite 数据库（可能含聊天记录，禁止提交）
+*.sqlite3
+*.sqlite3-wal
+*.sqlite3-shm
+
+# ⚠️ 凭证：账号文件含 authcode，**禁止提交**
+#    只放行 *.example.json（schema 范例，里面必须是占位值）
+plugin/accounts/*.json
+!plugin/accounts/*.example.json
+
+# 本地 env（可能含 DB 口令 / LLM key）
+.env
+.env.*
+!.env.example
+
+# 覆盖率产物
+.coverage
+.coverage.*
+htmlcov/
+
+# 备份/临时产物（不属于源码）
+*.tar.gz
+*.zip
+*.bak-*
+
+# 内部运维材料（本机保留，不进入公开树）
+tools/
+docs/internal/
+DEVELOPMENT_RULES.md
+
+# 技能工坊暂存区（临时产物）
+skills-workshop-staging/
+
+# 本机测试护栏：生产 bot wxid（公开仓不携带）
+conftest_local.py
+
+# 本机专属的真实标识黑名单（含生产 wxid/群号/域名，禁止提交）
+public_tree_denylist.txt

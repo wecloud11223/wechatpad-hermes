@@ -1,0 +1,14 @@
+{
+  "name": "wechatpadpro-console",
+  "label": "云端社交聚合控制台",
+  "description": "WPP 账号运维、准入/欢迎/开关编辑、群成员、消息分析、心流运营与配对",
+  "icon": "MessageSquare",
+  "version": "2.4.0",
+  "tab": {
+    "path": "/wpp-console",
+    "position": "end"
+  },
+  "entry": "dist/index.js",
+  "css": "dist/style.css",
+  "api": "plugin_api.py"
+}
