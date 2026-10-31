@@ -1,7 +1,7 @@
 # 只放工具链配置（本仓不打包发布）。pytest 配置仍在 pytest.ini。
 [project]
 name = "wpp-hermes"
-version = "3.1.0"
+version = "3.1.1"
 description = "WPP Cloud 托管个人微信的 Hermes 平台插件（网关 + 回调 + /Msg/Sync）"
 readme = "README.md"
 license = { text = "MIT" }

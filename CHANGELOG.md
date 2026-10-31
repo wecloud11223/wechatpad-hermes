@@ -4,6 +4,46 @@
 
 ---
 
+## v3.1.1 — 2026-10-31
+
+对 v3.1.0 的**审阅收口**：一处会多发微信的边界、一处长期红着的测试夹具、一处漏掉的
+路径归一，以及测试环境的隔离。行为面只动了写端点重试的判据（更严），其余都是把
+"看起来绿/看起来对"变成"真的对"。
+
+- **写端点重试加一道上游判据（安全，可能导致重复发送）**：v3.1.0 让写端点在
+  `408/429/503` 重试一次，前提是"网关明确没接受"。但 WPP 网关会把 **pad 的响应原样
+  透传**（透传时回写 `X-Wpp-Token`）—— 那个 503 可能是 pad **已经把消息发出去之后**
+  才返回的，重发就是给对方多发一条微信（撤不回）。现在 `_request` 里写端点除了状态码
+  还要求 `write_retry_is_safe()`：响应**不带** `X-Wpp-Token`（= 错误由网关边缘产生，
+  请求没转发到 pad）才允许重试一次。vendor 直连模式没有这个头，行为与 v3.1.0 一致。
+  用例：`test_a_write_never_retries_a_passthrough_error` /
+  `test_a_write_still_retries_an_edge_rejection`。
+- **测试环境隔离（本机"假红"根治）**：`conftest.py` 新增 `PRODUCTION_ENV_KEYS`，
+  每个用例前清掉 `WECHATPRO_SEND_ALLOWLIST` / `WECHATPRO_ALLOWED_USERS` /
+  `WECHATPRO_AUTHCODE` / `WECHATPRO_TOKEN_KEY` / `WPP_GATEWAY_TOKEN` 等生产凭证与
+  白名单。此前这些值从启动 shell 漏进 `netguard.env_allowlist()` ⇒ 出站闸按生产群号
+  拦截 ⇒ `test_api_retry` 等 **11 条用例在生产机上恒红**；更隐蔽的是用例可能拿着生产
+  authcode 构造 client（一旦真发请求就是在用生产凭据）。
+- **`test_unified_whitelist` 3 条长期红转绿**：夹具只打了 `read/write_account_keys` 的桩，
+  而 `sync_once` 走的是 `account_store.update_account`（跨进程锁 + 备份 + 原子写）⇒
+  在装了 `fcntl` 的 Linux 上必然抛 `账号目录不存在`。现在夹具给真实的临时
+  `accounts/` + 备份目录，并把记录点挂到 `update_account` 上（记**真正落盘**的变更键，
+  不再断言一个根本没被调用的函数）。
+- **webhook business 路径归一**：`derive_webhook_paths` 对 `webhookBusinessPath` 少写
+  前导 `/` 的情况同样自动补全（与 v3.1.0 对主路径的修复同一类 404：注册成相对路由、
+  vendor 推绝对路径 ⇒ 入站静默全丢），并去掉尾斜杠造成的 `/webhook//business`。
+- **`SyncFallback.stop()` 之后不再自启任务**：在途 `trigger` 被取消后仍会走 `finally`，
+  那里可能把 pending 的"补拉"重新 `spawn` 出来 —— 新任务握着**已关闭的 client**
+  继续拉、继续写游标，与重连后新建的实例互相踩（跨实例的游标竞争，`_in_flight` 锁
+  防不住）。现在 `stop()` 置 `_stopped`，`spawn` / `trigger` / 补拉三处一致拒收。
+- **`mask_secret` 短串全遮**：≤ 8 位的串留"头 4 尾 2"等于把整串还回去（控制台诊断
+  接口会连 webhook URL 一起给出去）；现在整体 `****`，9 位起才留头尾。
+- **验证（本机，生产 env 未清理的 shell）**：`3064 passed, 10 skipped`（v3.1.0 时代为
+  `3055 passed, 10 skipped` + 3 条 `test_unified_whitelist` 红 + 11 条被生产 env 打红）；
+  `ruff check plugin tools` 与 `scripts/check_public_tree.py`（280 文件）均通过。
+
+---
+
 ## v3.1.0 — 2026-10-31
 
 按平台侧最新语义做的一次能力补齐（重试策略、兜底可见性、诊断接口）。
