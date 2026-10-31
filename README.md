@@ -228,13 +228,10 @@ HERMES_HOME=~/.hermes hermes gateway restart
 | 同一消息重复投递 | `msgId` 去重（at-least-once） |
 | 媒体过大 / 读取失败 | 可读错误 + 降级，不阻塞事件循环 |
 
-## 网关边界
+## 安全边界
 
-平台网关只开放业务面，插件本地先挡一次并给出可行动错误：
-
-- 屏蔽家族：`Admin` / `Webhook` / `Runtime` / `Customized`
-- 屏蔽操作：`SetProxy`、`GetBoundHardDevices`、`StartAutoSync`、`StopAutoSync`
-- `Login` 仅放行：`GetLoginStatus`、`LongLinkStatus`、`HeartBeatLong`、`AutoHeartBeat`
+平台网关只开放业务面：控制面、回调注册、运行时管理等非业务接口由客户端本地预挡，
+越界调用直接返回可读错误，不会打到平台。具体策略随平台版本调整，不在文档中展开。
 
 ## 部署与切换
 

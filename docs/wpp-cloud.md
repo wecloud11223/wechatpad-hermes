@@ -83,15 +83,13 @@ print(accounts.resolve("default").cloud_callback_url)
 PY
 ```
 
-## 4. 网关边界
+## 4. 安全边界
 
-WPP 网关只开放业务面。插件在本地先挡一次，错误信息可直接行动：
+平台网关只开放业务面。插件在本地先挡一次，错误信息可直接行动：
 
-- 屏蔽家族：`Admin` / `Webhook` / `Runtime` / `Customized`；
-- 屏蔽操作：`/Tools/SetProxy`、`/Tools/GetBoundHardDevices`、
-  `/Msg/StartAutoSync`、`/Msg/StopAutoSync`（云端 AutoSync 由 WPP 控制台负责）；
-- `Login` 只放行：`GetLoginStatus`、`LongLinkStatus`、`HeartBeatLong`、
-  `AutoHeartBeat`。
+- 控制面、回调注册、运行时管理等非业务接口一律拒绝（清单随平台版本调整，不展开）；
+- 登录类只放行状态查询与心跳；
+- 同步开关、网络出口等影响共享会话的操作由平台控制台负责。
 
 ## 5. 重试与兜底语义（v3.1.0 起）
 

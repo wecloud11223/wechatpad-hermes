@@ -27,8 +27,7 @@
     既不再静默丢一条，也不会让一条永久坏消息堵死整条兜底通道。
   - 在途拉取期间到来的触发**记为 pending**，本轮 `finally` 里立刻补拉一趟（每轮只
     消费一次，防自激）——此前直接 `return 0`，那条推送通知只能等 60s 定时器。
-- **网关边界（对齐 v1.0.0）**：`_CLOUD_BLOCKED_OPS` 补 `/Msg/StartAutoSync`、
-  `/Msg/StopAutoSync`（AstrBot 两者都挡；云端 AutoSync 由 WPP 控制台负责）。
+- **网关边界**：补齐云端不得开放的两个同步开关操作（AutoSync 由平台控制台负责）。
 - **控制台排障（对齐 v1.1.0 #14）**：`GET /accounts/{id}/diagnostics` 新增
   `webhook_url` —— WPP 控制台应填的消息回调地址，`webhookPathToken` 已打码
   （`core/redact.py`），现场排障不必再翻账号配置。非 cloud 账号返回空串。
@@ -83,8 +82,7 @@
   完整消息直接走既有入站管线。无副作用的 `extract_all_msg_src` 做通知探测，
   避免 `SeenTracker` 被探测写入而整批误判重复。
 - **注册**：cloud 模式不向 vendor 注册 `/Webhook/*`，只注册本插件的普通回调路由。
-- **网关边界**：本地预挡 Admin/Webhook/Runtime/Customized、SetProxy、
-  GetBoundHardDevices；Login 仅放行状态与心跳。
+- **网关边界**：控制面/回调注册/运行时管理类接口本地预挡；登录类仅放行状态与心跳。
 - **启用/向导/清单**：`WPP_GATEWAY_TOKEN` 可单独启用合成 default 账号；
   setup wizard、plugin.yaml、`accounts/cloud.example.json`、`docs/wpp-cloud.md`
   同步为 WPP 口径。

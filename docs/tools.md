@@ -7,10 +7,8 @@
 - 除少数明确说明的工具外，参数都可选传 `account_id`（默认 `default`）；多账号部署时应显式指定。
 - `toWxid` / `QID` 等目标既可以是用户 wxid，也可以是群 `xxx@chatroom`。
 - 资金、群管理、朋友圈发布、小微等高风险工具受管理员或账号开关约束，未开启时会直接拒绝执行。
-- **WPP Cloud 策略**：网关会拒绝 `Admin` / `Login`（仅放行白名单状态类）/ `Webhook` /
-  `Runtime` / `Customized` 家族，以及 `SetProxy` / `GetBoundHardDevices` /
-  `StartAutoSync` / `StopAutoSync`。这些工具仍会注册，但调用返回策略错误；
-  回调请一律在 WPP 控制台配置，不要用 `wpp_webhook_*`。
+- **云端策略**：控制面/回调注册/运行时管理等非业务接口由平台网关拒绝，对应工具仍会
+  注册，但调用返回策略错误。回调请一律在平台控制台配置，不要用 `wpp_webhook_*`。
 - 本页按功能域分组；同一工具可能同时出现在多个调用场景中，以实际注册名为准。
 
 ## 目录
