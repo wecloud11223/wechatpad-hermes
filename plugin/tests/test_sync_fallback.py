@@ -470,6 +470,27 @@ def test_timers_fire_and_stop_cleanly():
     asyncio.run(main())
 
 
+@_sync
+async def test_a_stopped_fallback_refuses_new_pulls():
+    """``stop()`` 之后到来的触发一律拒收（含"本轮补拉"）。
+
+    坏法：disconnect 时 ``stop()`` 取消在途触发，而它的 ``finally`` 又把 pending 的
+    补拉 ``spawn`` 出来 —— 新任务握着**已关闭的 client** 继续拉、继续写游标，与重连后
+    新建的实例互相踩（``_in_flight`` 锁防的那件事，跨实例发生就防不住了）。
+    """
+    api = _Api([_resp([], key="K9")])
+    events: list = []
+    s = _mk(api, events)
+    await s.stop()
+
+    s.spawn(REASON_PUSH)
+    await asyncio.sleep(0)
+    assert s._tasks == set(), "停机后不许再起任务"
+    assert await s.trigger(REASON_PUSH) == 0
+    assert api.sent == [], "停机后不许再打厂商"
+    assert events == [], "停机后不许写游标"
+
+
 # ============================================================ 7. 响应形状（纯函数）
 
 @pytest.mark.parametrize("resp,expected", [

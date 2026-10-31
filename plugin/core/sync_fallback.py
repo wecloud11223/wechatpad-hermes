@@ -182,6 +182,8 @@ class SyncFallback:
         #: 坏消息会把整条兜底通道永久堵死（AstrBot 的"失败不前进"在 py2 上必须配这个上限）。
         self._hold_rounds = 0
         self.max_hold_rounds = 3
+        #: ``stop()`` 之后到来的触发一律拒收（见 :meth:`spawn`）。
+        self._stopped = False
         self._timers: list[asyncio.Task[None]] = []
         self._tasks: set[asyncio.Task[None]] = set()
 
@@ -205,6 +207,7 @@ class SyncFallback:
         """
         if self.interval_s <= 0 or self.running:
             return
+        self._stopped = False
         self._timers = [
             asyncio.create_task(self._tick_loop(self.trigger, REASON_TIMER),
                                 name=f"wpp-sync-timer-{self.account_id}"),
@@ -214,7 +217,14 @@ class SyncFallback:
         ]
 
     async def stop(self) -> None:
-        """停定时器 + 掐掉在跑的触发任务（``disconnect()`` 调它）。"""
+        """停定时器 + 掐掉在跑的触发任务（``disconnect()`` 调它）。
+
+        置 ``_stopped`` 是必须的：在途的 ``trigger`` 被取消后仍会走 ``finally``，
+        而那里可能把 pending 的"补拉"重新 ``spawn`` 出来 —— 那个新任务握着**已经关掉的
+        client** 继续拉取、继续写游标，与重连后新建的实例互相踩（正是 ``_in_flight``
+        锁要防的那件事，只是跨实例发生）。停机之后一律不再自启任务。
+        """
+        self._stopped = True
         timers, self._timers = self._timers, []
         for t in timers:
             t.cancel()
@@ -247,7 +257,13 @@ class SyncFallback:
         在那里直接 ``await`` 一趟 HTTP 拉取会把**收帧**也堵住（快群能把读循环压成
         "一条一拉"）。所以触发一律走 ``create_task``，并且挂 done 回调把异常喊出来
         （否则就是 "Task exception was never retrieved" 那种静默）。
+
+        ``stop()`` 之后（账号已断开/已换实例）直接丢掉：此时 client 正在/已经被关掉，
+        再拉一趟只会对着已关闭的连接报错并写坏游标。
         """
+        if self._stopped:
+            log.debug("[WPP:%s SYNC] 已停机，忽略触发（reason=%s）", self.account_id, reason)
+            return
         try:
             task = asyncio.create_task(self._run(reason),
                                        name=f"wpp-sync-{self.account_id}-{reason}")
@@ -282,6 +298,8 @@ class SyncFallback:
             # 记下来，本轮 ``finally`` 里立刻补拉 —— 否则这条通知永久丢失（AstrBot v1.2.0 同款）。
             self._pending_reason = reason
             log.debug("[WPP:%s SYNC] 已有拉取在跑，记 pending（reason=%s）", self.account_id, reason)
+            return 0
+        if self._stopped:
             return 0
         self._in_flight = True
         try:
@@ -351,7 +369,7 @@ class SyncFallback:
         finally:
             self._in_flight = False
             pending, self._pending_reason = self._pending_reason, None
-            if pending:
+            if pending and not self._stopped:
                 # 本轮期间来的触发通知不能丢：立刻补拉一趟（非阻塞，防自激靠
                 # ``_pending_reason`` 每轮只消费一次）。
                 log.debug("[WPP:%s SYNC] 本轮结束，补拉 pending 触发（reason=%s）",
