@@ -21,6 +21,9 @@
   ``{408,429,503}``**（请求没被接受 ⇒ 重发不会多出一条微信）。其余 4xx 是永久错误，
   500/502/504 对写端点**不重试**（可能已经发出去了，撤不回）。``Retry-After`` 优先于
   指数退避，统一夹到 ``[0.2s, 10s]``。
+  **★ 云端模式下还要求"这次失败确实来自网关边缘"**：WPP 网关透传 pad 响应时会回写
+  ``X-Wpp-Token``，带了它说明请求已经转发到 pad ⇒ 那个 503 可能是 pad **执行之后**
+  返回的，写端点一律不再重发（判据见 :meth:`WppClient.write_retry_is_safe`）。
 - 下载类端点**不走** ``_url()`` 的 ``/api`` 拼接，且额外带 ``TokenKey`` header。
 
 ## ⚠️ ``aiohttp`` 必须在**函数体内**导入（不许搬到模块级）
@@ -147,6 +150,42 @@ def _retry_delay(resp: Any, attempt: int, backoff: Any) -> float:
     parsed = _parse_retry_after(raw)
     delay = backoff(attempt) if parsed is None else parsed
     return min(max(float(delay), _RETRY_AFTER_MIN_S), _RETRY_AFTER_MAX_S)
+
+
+#: WPP Cloud 网关**透传 pad 响应**时回写的头（``internal/server/handlers_gateway.go``
+#: 的 pass-through 分支；边缘自己产生的错误没有它）。它唯一可靠的用途就是"这个状态码
+#: 到底是谁给的" —— 对写端点重试与否是**能不能多发一条微信**的分界。
+UPSTREAM_MARKER_HEADER = "X-Wpp-Token"
+
+
+def _header_value(headers: Any, name: str) -> str:
+    """取响应头（aiohttp 的 CIMultiDict 大小写不敏感，测试里的普通 dict 不是）。"""
+    try:
+        value = headers.get(name)
+        if value is None:
+            value = headers.get(name.lower())
+    except AttributeError:  # 假 aiohttp / 非 Mapping 头
+        return ""
+    return str(value or "")
+
+
+def write_retry_is_safe(resp: Any, status: int) -> bool:
+    """写端点这次失败是否**可证明**没被上游执行过（决定能不能再发一次）。
+
+    ``{408,429,503}`` 的值来自两条不同的路径，语义完全不同：
+
+    * **网关边缘拒绝**（限流、授权状态不可用、平台授权过期…）—— 请求根本没转发到 pad，
+      重发是安全的。这些响应**不带** :data:`UPSTREAM_MARKER_HEADER`。
+    * **pad 的响应被原样透传** —— 带了那个头。此时 503 可能是 pad 已经把消息发出去、
+      只是响应/转发环节出错，再发一次就是给对方**多一条微信**（撤不回）。
+
+    所以：状态码在 ``_SAFE_RETRY_HTTP_STATUS`` **且**没有上游标记头，才允许重试一次。
+    非云端（vendor 直连）模式本来就没有这个头，行为与 v3.1.0 一致。
+    """
+    if status not in _SAFE_RETRY_HTTP_STATUS:
+        return False
+    return not _header_value(getattr(resp, "headers", None) or {}, UPSTREAM_MARKER_HEADER)
+
 
 #: 响应里可能承载 base64 载荷的键名 —— **取并集**，旧实现各方法用的子集不同
 _B64_KEYS = ("buffer", "Buffer", "Image", "image", "Voice", "voice",
@@ -603,8 +642,10 @@ class WppClient:
                             if max_retries > 0:
                                 allowed = attempt <= max_retries
                             else:
-                                allowed = (status in _SAFE_RETRY_HTTP_STATUS
-                                           and attempt == 1)
+                                # 写端点：状态码之外还要看**这个状态码是谁给的**
+                                # （上游透传的 503 可能已经执行过，不能再发一次）。
+                                allowed = (attempt == 1
+                                           and write_retry_is_safe(resp, status))
                             if allowed:
                                 delay = _retry_delay(resp, attempt, backoff)
                                 log.warning("[WPP] %s -> HTTP %s，%.1fs 后重试（第 %d 次）",

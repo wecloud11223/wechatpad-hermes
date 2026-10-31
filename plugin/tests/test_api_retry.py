@@ -126,6 +126,35 @@ def test_each_safe_status_is_retried_once_for_writes(monkeypatch, no_sleep, stat
     assert sess.calls == 2, "安全状态只该重试一次（总共 2 次请求）"
 
 
+def test_a_write_never_retries_a_passthrough_error(monkeypatch, no_sleep):
+    """★ 网关**透传** pad 的 503（响应带回写头）⇒ 写端点绝不重发。
+
+    这是 v3.1.0 "写端点允许对 503 重试一次" 的边界：503 有两种来源 —— 网关边缘
+    （请求没转发，重发安全）与 pad 透传（可能已经把消息发出去了）。只看状态码会把
+    后者也重发一遍 ⇒ 对方收到两条微信。判据是网关 pass-through 时回写的
+    ``X-Wpp-Token``（边缘自己产生的错误不带它）。
+    """
+    sess = _install_fake_aiohttp(
+        monkeypatch, [(503, "busy", {"X-Wpp-Token": "pub_test_01"}), _ok()])
+    client = WppClient(base_url="https://cloud.test/api/v1/gateway", authcode="wxa_test",
+                       cloud_mode=True, audit=False, send_allowlist=())
+    with pytest.raises(WppApiError) as ei:
+        asyncio.run(client.send_text("wxid_a", "hi"))
+    assert ei.value.code == "http_503"
+    assert sess.calls == 1, "上游已经执行过的 503 被重发了 —— 可能给对方发了两条"
+
+
+def test_a_write_still_retries_an_edge_rejection(monkeypatch, sleeps):
+    """边缘自己拒的 503（没有回写头）= 请求没到 pad ⇒ 写端点仍可重试一次。"""
+    sess = _install_fake_aiohttp(monkeypatch, [(503, "degraded"), _ok()])
+    client = WppClient(base_url="https://cloud.test/api/v1/gateway", authcode="wxa_test",
+                       cloud_mode=True, audit=False, send_allowlist=())
+    out = asyncio.run(client.send_text("wxid_a", "hi"))
+    assert out.get("Code") == 0
+    assert sess.calls == 2
+    assert len(sleeps) == 1
+
+
 def test_a_write_never_retries_a_500(monkeypatch, no_sleep):
     """★ 500 可能是"已执行但报错" —— 对写端点绝不重试。"""
     sess = _install_fake_aiohttp(monkeypatch, [(500, "boom"), _ok()])
