@@ -1,14 +1,14 @@
 # 安装、升级与卸载
 
-> 本仓库是 **WPP Cloud 专用**的 Hermes 插件（`wpp-cloud-platform`），只对接
-> WPP 托管网关：出站 `https://<host>/api/v1/gateway` + `Authorization: Bearer wxa_...`，
-> 入站由 WPP 控制台「消息回调」触发 + `/Msg/Sync` 每 60s 兜底。**不直连 vendor、
-> 不建 vendor WebSocket、不向 vendor 注册 `/Webhook/*`**。
+> 本插件把**个人微信（Pad 协议）**接入 Hermes：账号托管在
+> [云端社交聚合平台](https://cloud.juhe.chat)，扫码即用、7×24 在线。插件只对接平台
+> 网关 —— 出站 `https://<host>/api/v1/gateway` + `Authorization: Bearer wxa_...`，
+> 入站由平台控制台「普通回调」触发 + `/Msg/Sync` 每 60s 兜底。
 >
-> 原 vendor 直连插件 `wechatpadpro-platform` 保持不动；两者使用同一个 Hermes
-> 平台名 `wechatpadpro`，**不能同时启用**（同名平台会互相遮蔽）。
+> 不需要自建协议端、模拟器或 WebSocket 长连接。
 >
-> AstrBot 用户请用 [astrbot-plugin-wpp-cloud](https://github.com/jiexiaoyin/astrbot-plugin-wpp-cloud)。
+> 与直连模式的旧账号插件共用同一个 Hermes 平台名 `wechatpadpro`，
+> **同一时间只能启用一个**；切换时先停旧、再启新。
 
 ## 前置条件
 

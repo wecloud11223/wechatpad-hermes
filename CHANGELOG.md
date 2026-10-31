@@ -1,14 +1,12 @@
 # CHANGELOG
 
-本文件记录 Python 侧（本仓）的版本。TS 版历史在 `jiexiaoyin/wpp-openclaw` 的 CHANGELOG。
-
 版本号与 `plugin/plugin.yaml` 的 `version` 保持一致；打 tag 用 `v<version>`。
 
 ---
 
 ## v3.1.0 — 2026-10-31
 
-Hermes 侧对齐 AstrBot `astrbot-plugin-wpp-cloud` v1.0.0–v1.3.0 的能力迭代。
+按平台侧最新语义做的一次能力补齐（重试策略、兜底可见性、诊断接口）。
 逐项对照审计后只移植了**确实缺失且有现场价值**的部分；机制已在 Hermes 侧等价
 实现（filehelper 边缘认证、复读保护、降级重发、msg_id 字符串、先 ack 后处理）
 的一律不动，避免为"逐字对齐"削弱更严的现有语义。

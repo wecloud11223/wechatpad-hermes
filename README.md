@@ -1,52 +1,170 @@
-# wpp-hermes-cloud
+# wechatpad-hermes
 
-Hermes Agent 的 **WPP Cloud 托管个人微信** 平台插件。它是
-[`wpp-hermes`](https://github.com/jiexiaoyin/wpp-hermes) 的 WPP-only 分支：
-只对接 WPP 托管网关，不再直连 vendor 服务。
+**个人微信（Pad 协议）· 云端托管 · Hermes Agent 平台插件**
 
-| 方向 | 本插件（WPP Cloud） | 原 vendor 插件 |
+让 Hermes 直接拥有一个真实的个人微信号：账号托管在
+[**云端社交聚合平台**](https://cloud.juhe.chat)，扫码接入、7×24 在线，插件只对接
+平台网关（一把 `wxa_…` 令牌），不依赖设备、模拟器或自建协议服务。
+
+- 平台：Hermes `>= 0.21.5`
+- 版本：`3.1.0`
+- 许可：MIT
+- 能力面：**292 个 `wpp_*` 工具** + 平台收发 + 群运营 + 心流 + 控制台
+
+---
+
+## 为什么走云端托管
+
+| | 自建协议端 | **本插件 + 云端托管平台** |
 | --- | --- | --- |
-| 出站 | `https://<host>/api/v1/gateway` + `Authorization: Bearer wxa_...` | `https://<host>/api/...?authcode=...` |
-| 凭据 | WPP 网关令牌（每账号一把） | vendor authcode + tokenKey |
-| 入站主通道 | WPP 控制台「消息回调」→ 本插件 webhook | vendor `/Webhook/Set` |
-| 入站兜底 | `/Msg/Sync` 每 60s + 收到通知立即拉 | vendor WS + `/Msg/Sync` |
-| vendor WS | **不建立** | `wss://.../ws/sync` |
-| vendor 回调注册 | **不注册**（槽位归 WPP） | 每 5 分钟 `/Webhook/*` |
+| 接入 | 部署协议服务、维护设备/模拟器、跟随协议升级 | 控制台**扫码托管**，插件只填网关地址 + 令牌 |
+| 稳定性 | 掉线/风控/会话失效全自己兜 | 平台侧会话保持、心跳与重连，账号常在线 |
+| 多账号 | 多进程多端口多套配置 | 多份账号 JSON，一个账号一把网关令牌 |
+| 观测 | 只有自己的日志 | 控制台 7 个页签 + `/metrics` + 诊断接口 |
+| 边界 | 全量接口暴露 | 网关只开业务面，管理/回调注册类接口本地直接拦截 |
 
-- 插件包名：`wpp-cloud-platform`（`plugin/plugin.yaml`），**可以与原插件并存安装**。
-- Hermes 平台名仍是 `wechatpadpro`（工具、配置键、cron 投递变量都依赖它）
-  ⇒ **同一进程里同一时间只能启用一个**。切换时先停旧插件，再启本插件。
-- 不修改 Hermes 本体代码；所有能力都在插件目录内。
+一句话：**协议与会话交给平台，Agent 只专注「说什么、什么时候说」。**
 
-完整配置与排障见 [`docs/wpp-cloud.md`](docs/wpp-cloud.md)。
+---
 
-## 1. WPP 控制台准备
+## 核心能力
 
-1. 账号已导入/托管在 WPP（Authcode 属于共享生产客户端）。
-2. 在账号详情里**签发网关令牌**：`wxa_...`。只完整展示一次；重新签发会让旧令牌失效。
-3. 启动插件后读取本账号应填的回调 URL：
+### 消息与媒体
 
-   ```bash
-   python3 - <<'PY'
-   from plugin.core import accounts
-   print(accounts.resolve("default").cloud_callback_url)
-   PY
-   ```
+- 收发文本、图片、语音、视频、文件、链接卡片、名片、位置、小程序、引用回复、撤回。
+- 语音双向：入站 SILK 解码 + 转写（给模型看）；出站按情绪 TTS 合成语音，
+  编码失败自动降级成语音文件。
+- 媒体内联编码走线程池 + 200MB 上限，不阻塞事件循环；大文件走上传通道。
 
-   把它填到 WPP 控制台的**普通回调**。若账号仍显示「Standalone 导入 / 只读」，
-   管理员先在账号详情点「转为云托管」再保存；转托管不轮换 authcode、网关令牌
-   或微信会话。已转托管（origin=wpp）的账号直接保存即可，无需 `?takeover=1`
-   （business 回调不受影响）。
-4. 把回调的 customer secret 配到账号文件的 `webhookSecret`。WPP 发送 v2 签名：
+### 292 个工具，19 个能力域
 
-   ```
-   X-Webhook-Signature = hex(HMAC-SHA256(secret, f"{TimestampMs}.{DeliveryID}." + raw_body))
-   X-Webhook-Timestamp-Ms / X-Webhook-Delivery / X-Webhook-Signature-Version: v2
-   ```
+| 域 | 数量 | 域 | 数量 |
+| --- | --- | --- | --- |
+| 消息收发与互动 | 26 | 语音与媒体文件 | 20 |
+| 群聊管理 | 24 | 账号、登录与资料 | 37 |
+| 好友与通讯录 | 20 | 朋友圈 | 29 |
+| 微信搜索 | 23 | 视频号 | 19 |
+| 公众号 | 15 | 支付与红包 | 16 |
+| 小程序 | 12 | 收藏 / 企微联系人 | 4 / 3 |
+| 小微智能体 | 20 | MCP 兼容工具 | 10 |
 
-   只配 `webhookPathToken` 也能工作（fail-closed），但不推荐。
+模型按自然语言自动选工具，也可以直接点名（如 `wpp_send_text`、`wpp_fc_list`）。
+完整清单见 [docs/tools.md](docs/tools.md)。
 
-## 2. 最小配置
+### 双通道入站
+
+| 通道 | 作用 |
+| --- | --- |
+| 平台普通回调（webhook） | 主通道；v2 HMAC（±300s）、缺 secret 时 fail-closed |
+| `/Msg/Sync` 兜底 | 默认 60s 一轮；收到回调通知立刻补拉 |
+
+- **首次同步不回放**：只落 `KeyBuf` 游标，重启不会补回历史。
+- **先派发、后前进游标**：进程退出最多重复，由 `msgId` 去重兜底（at-least-once）。
+- **派发失败游标不前进**：本轮失败下一轮重拉；连续 3 轮仍失败才放弃并记 ERROR，
+  既不静默丢消息，也不会让一条坏消息永久堵死兜底通道。
+- **在途补拉**：拉取过程中又收到通知，本轮结束后立即再拉一次，不丢触发。
+
+### 群运营
+
+- 群白名单 / 黑名单 / 静默、私聊放行、必须 @ 才回复。
+- 成员变动识别：进群/退群系统通知驱动成员表更新。
+- 进群欢迎：模板变量 + @ 新人，可按群画像润色。
+- 复读保护：同内容窗口内抑制，且**确认发送成功后才计数**。
+
+---
+
+## 特色功能
+
+这些能力是「让机器人像群成员」的关键，默认关闭、按需开启，失败只降级不阻塞收发。
+
+### 群聊心流（heartflow）
+
+群消息 90% 不需要机器人开口。心流用一次小模型调用做**五维打分**
+（相关性 / 意愿 / 社交适宜 / 时机 / 连续性），加权过阈值才接话。
+
+- **三重预算取更严**：账号配置、群画像建议、外环占比三者取最严格的一档
+  —— 画像只能让它更克制，不能让它更激进。
+- **群画像**：自动总结每个群的身份、话题、活跃时段，供判定参考。
+- **冷却与频率限制**：同步预筛先拦掉不该花的模型调用。
+- **台账留痕**：过没过阈值、为什么被拦，全部落库，方便复盘调参。
+
+### 好感度与情绪
+
+按群内互动记账，影响回复语气与 TTS 情绪；私聊没有群情绪记录，固定 `calm`。
+
+### 意图识别与群上下文
+
+群里 @ 机器人时只挑相关消息注入上下文（可选向量检索），避免被无关聊天带偏。
+
+### 黑话挖掘与说话风格
+
+- **黑话**：从群聊里发现并解释本群特有词，回复时参考。
+- **风格**：学习群友的句长、语气词、称呼、表情，让回复更像群里的人。
+
+### 朋友圈
+
+29 个工具覆盖发布（图文/视频）、列表、详情、点赞、评论、删除、可见范围；
+`fristpagemd5` 翻页等平台细节都已封装。
+
+### 历史检索
+
+收发消息落 SQLite（默认）或 MySQL，可按人 / 群 / 关键词检索——
+「上周三老王说的那个链接」这类问题不需要翻手机。
+
+### 可观测控制台
+
+Hermes dashboard 内嵌 **「云端社交聚合控制台」**（7 个页签）：
+
+`状态运维` · `准入策略` · `进群欢迎` · `能力开关` · `群与成员` · `消息分析` · `心流运营`
+
+- 3 秒热加载配置，跨进程写锁 + `expected_mtime_ns` 乐观并发（改冲突返回 409）。
+- 不调用平台接口、不触发同步：只读写账号配置与本地库，页面不会把生产号拖慢。
+- 诊断接口附带**打码后**的派生回调地址，排障时一眼对上平台控制台。
+
+### 主动关心（私聊）
+
+私聊场景按策略主动发起关心，白名单控制对象，可配时段与频次。
+
+### MCP 兼容
+
+开启后给 MCP 调用方一份精简工具集，方便外部 Agent 复用同一个微信号。
+
+---
+
+## 架构
+
+```
+ 手机微信（真实账号）
+      │  扫码登录，会话由平台维持
+      ▼
+┌──────────────────────────────────┐
+│ 云端社交聚合平台  cloud.juhe.chat   │
+│  扫码托管 · 会话保持 · 心跳重连      │
+└───────────────┬──────────────────┘
+                │ 出站：POST /api/v1/gateway + Bearer wxa_…
+                │ 入站：普通回调（v2 HMAC）/ 通知触发 /Msg/Sync
+                ▼
+┌──────────────────────────────────┐       ┌─────────────────┐
+│ wechatpad-hermes                  │◄─────►│   Hermes Agent   │
+│ 账号/策略 · 回调 · 兜底 · 工具 · 心流 │       │ 模型 / 技能 / 定时 │
+└──────────────────────────────────┘       └─────────────────┘
+```
+
+---
+
+## 快速开始
+
+### 1. 平台托管 + 签发令牌
+
+账号导入 [云端社交聚合平台](https://cloud.juhe.chat) 后，在账号详情签发网关令牌
+（`wxa_…`，只完整展示一次；重新签发会让旧令牌失效）。
+
+### 2. 安装插件
+
+```bash
+# 把 plugin/ 放到 Hermes 插件目录（目录名即插件 id，保持 wpp-cloud-platform 不变）
+cp -r plugin ~/.hermes/plugins/wpp-cloud-platform
+```
 
 `.env` / profile env：
 
@@ -56,7 +174,9 @@ WPP_GATEWAY_TOKEN=wxa_xxxxxxxx
 WECHATPRO_WEBHOOK_PUBLIC_URL=https://plugin.example.com
 ```
 
-`plugin/accounts/default.json`（参考 `cloud.example.json`）：
+### 3. 账号配置
+
+`plugin/accounts/default.json`（参考 `cloud.example.json`，真实账号文件不入库）：
 
 ```json
 {
@@ -68,68 +188,93 @@ WECHATPRO_WEBHOOK_PUBLIC_URL=https://plugin.example.com
   "webhookPath": "/wechatpadpro/webhook",
   "webhookPathToken": "<随机串>",
   "webhookPublicUrl": "https://plugin.example.com",
-  "webhookSecret": "<与 WPP 回调 secret 一致，可留空>"
+  "webhookSecret": "<与平台回调 secret 一致，可留空>"
 }
 ```
 
-- 只写 `gatewayToken` / `gatewayTokenEnv` 会自动进入 cloud 模式。
-- `authcode` / `tokenKey` 在 cloud 模式下**不生效**；`autoSetWebhook` 强制为 `false`。
-- 多账号按原插件方式各建一份 `accounts/<id>.json`，每账号一把网关令牌。
+只写 `gatewayToken` / `gatewayTokenEnv` 即自动进入 cloud 模式；`authcode` / `tokenKey`
+不生效，回调注册强制关闭（回调由平台控制台管理）。
 
-## 3. 入站语义
-
-- WPP 普通回调可能是**完整消息**，也可能只是 `sync_message` 通知（没有正文）。
-  通知会立即触发 `/Msg/Sync`，回调线程不等待 HTTP。
-- **首次同步不回放**：本机第一次同步只保存 `KeyBuf` 游标，不派发厂商返回的历史。
-- **先派发、后前进游标**：进程中途退出时下一轮会重复拉到同一批，由消息
-  `msgId` 去重兜底（at-least-once）。
-- **失败只告警**：`/Msg/Sync` 失败不会停掉平台，下一轮定时器继续重试。
-
-## 4. 网关边界
-
-WPP 网关只开放业务面；插件在本地先挡一次，给出可行动的错误：
-
-- 屏蔽家族：`Admin` / `Webhook` / `Runtime` / `Customized`；
-- 屏蔽操作：`/Tools/SetProxy`、`/Tools/GetBoundHardDevices`、
-  `/Msg/StartAutoSync`、`/Msg/StopAutoSync`；
-- `Login` 只放行：`GetLoginStatus`、`LongLinkStatus`、`HeartBeatLong`、`AutoHeartBeat`。
-
-## 5. 部署与切换
+### 4. 回填回调
 
 ```bash
-# 只同步代码到独立插件目录（不重启）
-bash sync.sh
-
-# 同步并重启网关
-bash deploy.sh --local --restart
+python3 - <<'PY'
+from plugin.core import accounts
+print(accounts.resolve("default").cloud_callback_url)
+PY
 ```
 
-目标目录固定为 `~/.hermes/plugins/wpp-cloud-platform`；**不会碰**
-`~/.hermes/plugins/wechatpadpro`，也不会覆盖任何 `accounts/` 或生产凭据。
+把该地址填到平台控制台的**普通回调**，secret 配到账号文件的 `webhookSecret`。
 
-生产切换顺序：
-
-1. 停用旧插件（原 `wechatpadpro` 实例），避免两边同时拉消息；
-2. 启用 `wpp-cloud-platform`；
-3. 在 WPP 控制台把回调切到 `cloud_callback_url`；
-4. 观察日志：`增量兜底启动` → `首次同步：只建立游标` → `收到 WPP 消息通知`。
-
-## 6. 测试
+### 5. 验证
 
 ```bash
-python -m pytest -q
+HERMES_HOME=~/.hermes hermes gateway restart
 ```
 
-> 必须在 Hermes 的 Python 环境中运行（`gateway` / `ruamel.yaml` / `aiohttp` 可见），
-> 并先装好 `pytest` / `pytest-asyncio`。
-> cloud 专项用例：`test_wpp_cloud_client.py`、`test_sync_fallback.py`、
-> `test_webhook.py`、`test_enablement.py`、`test_accounts.py`。
+日志依次出现：`增量兜底启动` → `首次同步：只建立游标` → `收到消息通知`。
+控制台「状态运维」页签能看到连接状态。
 
-## 仓库约定与自动同步
+---
 
-- 所有协作/agent 规则见 [AGENTS.md](AGENTS.md)。
-- 本仓库配置了 git 自动同步：`git commit` 后由 hook 自动推送，另有 5 分钟兜底的
-  systemd timer（`scripts/install-autosync-timer.sh`）。手动同步：
-  `bash scripts/git-autosync.sh`；新克隆先跑 `bash scripts/install-git-hooks.sh`。
-- 提交前敏感信息扫描：`python3 scripts/check_public_tree.py`（pre-commit 也会跑）。
+## 可靠性细节
 
+| 场景 | 行为 |
+| --- | --- |
+| 网关 408 / 429 / 503 | 写操作也重试一次，优先 `Retry-After`（夹到 0.2–10s） |
+| 网关 500 / 502 / 504 | 写操作不重试（防重复发送），读操作正常重试 |
+| 兜底派发失败 | 游标不前进、下一轮重拉；连续 3 轮放弃并记 ERROR |
+| 通知在拉取途中到达 | 本轮结束后立即补拉（pending） |
+| 同一消息重复投递 | `msgId` 去重（at-least-once） |
+| 媒体过大 / 读取失败 | 可读错误 + 降级，不阻塞事件循环 |
+
+## 网关边界
+
+平台网关只开放业务面，插件本地先挡一次并给出可行动错误：
+
+- 屏蔽家族：`Admin` / `Webhook` / `Runtime` / `Customized`
+- 屏蔽操作：`SetProxy`、`GetBoundHardDevices`、`StartAutoSync`、`StopAutoSync`
+- `Login` 仅放行：`GetLoginStatus`、`LongLinkStatus`、`HeartBeatLong`、`AutoHeartBeat`
+
+## 部署与切换
+
+```bash
+bash sync.sh                   # 只同步代码，不重启
+bash deploy.sh --local --restart  # 同步并重启网关
+```
+
+目标目录固定 `~/.hermes/plugins/wpp-cloud-platform`，不会碰 `accounts/` 与任何生产凭据。
+
+## 命名与兼容
+
+- 对外名称：**wechatpad-hermes**（本仓库）。
+- 内部标识：插件 id `wpp-cloud-platform`、Hermes 平台名 `wechatpadpro`、
+  环境变量 `WPP_CLOUD_*` / `WECHATPRO_*` —— 为兼容既有部署、工具名、配置键与
+  定时投递变量保持不变。
+
+## 测试
+
+```bash
+# 需要 Hermes 运行时（gateway 包）+ pytest / pytest-asyncio / ruamel.yaml
+python -m pytest plugin/tests -q
+```
+
+CI 在公开 runner 上只跑静态检查与敏感信息扫描；完整用例需要 Hermes 运行时，
+详见 [AGENTS.md](AGENTS.md)。
+
+## 文档
+
+| 文档 | 内容 |
+| --- | --- |
+| [docs/wpp-cloud.md](docs/wpp-cloud.md) | 云端模式接入、配置与排障 |
+| [docs/features.md](docs/features.md) | 心流 / 欢迎 / 好感度 / 语音 / 检索等增强能力 |
+| [docs/tools.md](docs/tools.md) | 292 个工具清单 |
+| [docs/configuration.md](docs/configuration.md) | 环境变量与账号字段总表、控制台 |
+| [docs/architecture.md](docs/architecture.md) | 数据流、进程模型与错误路径 |
+| [docs/troubleshooting.md](docs/troubleshooting.md) | 常见故障定位 |
+| [AGENTS.md](AGENTS.md) | 协作规范、git 自动同步、CI 说明 |
+
+## 链接
+
+- 云端社交聚合平台：<https://cloud.juhe.chat>
+- 问题反馈：<https://github.com/wecloud11223/wechatpad-hermes/issues>

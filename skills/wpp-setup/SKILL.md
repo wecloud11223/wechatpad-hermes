@@ -2,7 +2,7 @@
 name: wpp-setup
 description: 安装、配置与排障 WeChatPadPro Hermes 插件。
 version: 1.0.0
-author: wpp-hermes-py2 contributors
+author: wecloud11223
 license: MIT
 platforms: [linux, macos]
 metadata:

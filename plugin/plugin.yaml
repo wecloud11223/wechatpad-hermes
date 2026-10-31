@@ -1,8 +1,8 @@
 name: wpp-cloud-platform
-label: WPP Cloud (Personal WeChat)
+label: WechatPad · 个人微信 Pad 协议云端托管
 kind: platform
 version: 3.1.0
-author: knowhub-ops
+author: wecloud11223
 
 manifest_version: 2          # v2 解析路径（未知字段 warning 而非静默丢弃）
 api_version: 2

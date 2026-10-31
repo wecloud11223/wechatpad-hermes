@@ -1,20 +1,19 @@
-# WPP Cloud 模式
+# 云端托管模式
 
-本插件（`wpp-cloud-platform`）**只适配 WPP Cloud 托管**。它沿用原插件的平台名
-`wechatpadpro`（工具集、配置键、cron 投递变量都依赖这个名字），但传输面完全改成
-WPP：
+本插件把个人微信（Pad 协议）接入 Hermes，账号由
+[云端社交聚合平台](https://cloud.juhe.chat)托管；插件只对接平台网关。
 
-| 方向 | WPP Cloud 模式 | 原 vendor 直连插件 |
+| 方向 | 本插件（云端托管） | 直连模式（历史） |
 | --- | --- | --- |
 | 出站 | `https://<host>/api/v1/gateway` + `Authorization: Bearer wxa_...` | `https://<host>/api/...?authcode=...` |
-| 凭据 | WPP 网关令牌 `wxa_...`（每托管账号一把） | vendor authcode + tokenKey |
-| 入站主通道 | WPP 控制台「消息回调」→ 本插件 webhook | vendor `/Webhook/Set` → 本插件 webhook |
-| 入站兜底 | `/Msg/Sync` 每 60s + 收到通知立即拉 | vendor WS + `/Msg/Sync` |
-| vendor WS | **不建立** | `wss://.../ws/sync` |
-| vendor 回调注册 | **不注册**（槽位归 WPP） | 每 5 分钟 `/Webhook/*` |
+| 凭据 | 平台网关令牌 `wxa_...`（每托管账号一把） | 直连 authcode + tokenKey |
+| 入站主通道 | 平台控制台「普通回调」→ 本插件 webhook | 直连 `/Webhook/Set` → 本插件 webhook |
+| 入站兜底 | `/Msg/Sync` 每 60s + 收到通知立即拉 | 长连接 + `/Msg/Sync` |
+| 长连接 | **不建立** | `wss://.../ws/sync` |
+| 回调注册 | **不注册**（由平台控制台管理） | 每 5 分钟 `/Webhook/*` |
 
-> 原插件 `wechatpadpro-platform` 与本插件可以并存安装，但**同一时间只能启用一个**
-> —— 两者注册的平台名相同。切换时先停旧、再启新。
+Hermes 平台名沿用 `wechatpadpro`（工具集、配置键、cron 投递变量都依赖这个名字），
+所以与直连模式的旧账号插件**同一时间只能启用一个**；切换时先停旧、再启新。
 
 ## 1. 在 WPP 控制台准备
 

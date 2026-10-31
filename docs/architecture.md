@@ -114,7 +114,7 @@ send(chat_id, content, reply_to, metadata)
 | 面 | 机制 | 位置 |
 |---|---|---|
 | 入站 webhook | HMAC-SHA256(`TimestampMs.DeliveryID.rawBody`) + 路径 token | `platform/inbound_webhook.py::_verify_v2_signature` |
-| business 回调 | WPP 模式**不注册**（vendor 兼容分支专用） | `adapter_webhook.py::_start_webhook`（cloud 模式强制关闭） |
+| business 回调 | 云端托管模式**不注册**（直连模式专用） | `adapter_webhook.py::_start_webhook`（cloud 模式强制关闭） |
 | 出站凭据 | WPP 网关令牌 `wxa_...`，只从 `.env` / `0600` 文件读取 | `core/accounts.py` + `gatewayTokenEnv` |
 | 出站 | 白名单（`allowFrom` ∪ `groupAllowFrom` ∪ `adminUsers` ∪ env） | `outbound.assert_outbound_allowed` |
 | 本地读 | `netguard.is_local_read_allowed` + realpath | `core/netguard.py` |
@@ -133,7 +133,7 @@ send(chat_id, content, reply_to, metadata)
 plugin/
 ├── platform/
 │   ├── adapter.py            编排（2898 行；43% 是 ≤15 行转发方法，别再拆文件）
-│   ├── adapter_webhook.py    WebhookMixin：vendor 兼容分支（WPP 模式不注册）
+│   ├── adapter_webhook.py    WebhookMixin：直连模式兼容（云端托管不注册）
 │   ├── adapter_media.py      MediaMixin：9 个媒体方法
 │   ├── inbound_webhook.py    HTTP server + HMAC 验签 + /metrics
 │   ├── inbound_ws.py         WebSocket 兼容通道（WPP 模式不建立）
@@ -179,7 +179,7 @@ python -m pytest plugin/tests -q       # 本地契约测试
 # 首次安装
 bash scripts/install.sh
 
-# 本分支生产路径：只同步代码到独立插件目录（不碰 accounts/ 与 data/）
+# 生产部署路径：只同步代码到独立插件目录（不碰 accounts/ 与 data/）
 bash deploy.sh --local --restart
 
 # 升级：覆盖插件目录后跑验收

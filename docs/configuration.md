@@ -1,6 +1,6 @@
 # 配置参考
 
-> ⚠️ 本分支（`wpp-cloud-platform`）**只适配 WPP Cloud 托管**。下文涉及
+> ⚠️ 本插件（`wpp-cloud-platform`）对接的是**云端托管模式**。下文涉及
 > `WECHATPRO_AUTHCODE` / `tokenKey` / `wsUrl` / vendor 回调注册的段落属于旧
 > vendor 直连形态，仅作历史参考，不要用于新部署。WPP 模式的完整说明见
 > [`wpp-cloud.md`](wpp-cloud.md)。
@@ -150,7 +150,7 @@ profile、两台机器或两个测试进程；否则两边会重复拉取同一�
 | 字段 | 默认 | 说明 |
 |---|---|---|
 | `enabled` | `true` | 是否连接该账号 |
-| `cloudMode` | 自动推断 | WPP 模式；本分支部署应显式写 `true` |
+| `cloudMode` | 自动推断 | 云端托管模式；显式写 `true` |
 | `apiBaseUrl` | 环境变量 | WPP 网关地址（`.../api/v1/gateway`） |
 | `gatewayToken` / `gatewayTokenEnv` | — | WPP 网关令牌明文或环境变量名 |
 | `selfWxid` | 空 | bot 自己的 wxid；留空由 WPP 返回 |

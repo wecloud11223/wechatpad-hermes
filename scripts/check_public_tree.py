@@ -28,7 +28,7 @@ SKIP_SUFFIXES = {".pyc", ".png", ".jpg", ".jpeg", ".gif", ".ico", ".zip", ".gz"}
 #: 通用形态 —— 可以公开的部分（不含任何真实标识）。
 PATTERNS: tuple[tuple[str, re.Pattern[str]], ...] = (
     ("真实 wxid 形态", re.compile(r"wxid_(?!test|self|dummy|sample|example|replace|your)[a-z0-9]{11,}")),
-    ("厂商域名", re.compile(r"\b(?:wx|oss|adm)\.juhe\.chat\b|juhe\.chat")),
+    ("厂商域名", re.compile(r"\b(?:wx|oss|adm)\.juhe\.chat\b|(?<!cloud\.)\bjuhe\.chat\b")),
     ("生产密钥前缀", re.compile(r"\bwxa_[A-Za-z0-9]{24,}\b")),
     ("私钥", re.compile(r"BEGIN [A-Z ]*PRIVATE KEY")),
     ("内网主机", re.compile(r"\b(?:10|172\.(?:1[6-9]|2\d|3[01])|192\.168)\.\d+\.\d+\b")),
