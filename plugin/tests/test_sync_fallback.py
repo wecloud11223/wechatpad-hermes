@@ -491,6 +491,55 @@ async def test_a_stopped_fallback_refuses_new_pulls():
     assert events == [], "停机后不许写游标"
 
 
+@_sync
+async def test_stop_waits_for_an_in_flight_pull_and_drops_its_pending_respawn():
+    """``stop()`` 返回时**不许还有在途拉取** —— ``disconnect()`` 紧接着就关 client。
+
+    坏法：只 ``cancel()`` 不 ``await``，旧任务还能在已关闭的 client 上再走一段；
+    而它在途期间收到的推送会被 ``finally`` 的"补拉"重新 ``spawn``（``_stopped`` 挡住了
+    后者，但任务本身仍在跑）。判据落在「``stop()`` 返回后 ``in_flight`` 为假且任务集合
+    为空」，只看"调用了 cancel"分辨不出这两种状态。
+    """
+    api = _Api([_resp([], key="K9")])
+    api.gate = asyncio.Event()          # 让 /Msg/Sync 真的挂住（不 set）
+    events: list = []
+    s = _mk(api, events)
+    s.spawn(REASON_PUSH)
+    for _ in range(200):
+        if api.sent:
+            break
+        await asyncio.sleep(0.01)
+    assert s.in_flight is True
+    s.spawn(REASON_PUSH)                # 在途触发 ⇒ pending
+    await asyncio.wait_for(s.stop(), _LOCK_PROBE_S)
+    assert s.in_flight is False, "stop() 返回后仍有在途拉取（它还会继续用已关闭的 client）"
+    assert s._tasks == set()
+    assert api.sent == [SEED], "停机不该额外再拉一趟"
+    assert events == [], "被取消的拉取不许写游标"
+
+
+@_sync
+async def test_a_restarted_fallback_without_timers_still_accepts_triggers():
+    """``interval_s <= 0``（只靠推送）的账号**重连后**必须能再受理触发。
+
+    坏法：``start()`` 在 ``interval_s <= 0`` 时提前 return，而 ``_stopped`` 的复位写在
+    它后面 ⇒ 一旦 ``stop()`` 过就再也清不掉，推送触发全被静默丢弃（WS 主通道看着还连着，
+    现场只表现为"有些消息没人回"）。
+    """
+    api = _Api([_resp([], key="K2")])
+    events: list = []
+    s = _mk(api, events)                # interval=0：不起定时器
+    await s.stop()
+    s.start()
+    assert s.running is False, "interval<=0 不该起定时器"
+    s.spawn(REASON_PUSH)
+    for _ in range(200):
+        if api.sent:
+            break
+        await asyncio.sleep(0.01)
+    assert api.sent == [SEED], "重连后的推送触发被静默丢弃"
+
+
 # ============================================================ 7. 响应形状（纯函数）
 
 @pytest.mark.parametrize("resp,expected", [

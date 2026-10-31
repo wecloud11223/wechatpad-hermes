@@ -205,9 +205,12 @@ class SyncFallback:
 
         ``interval_s <= 0`` ⇒ **不起定时器**（TS ``if (this.fallbackSyncMs > 0)`` 同款）。
         """
+        # 复位必须在提前 return **之前**：``interval_s <= 0``（只靠推送/回调触发、
+        # 不开定时轮询）的账号重连后也要能重新受理触发，否则 ``_stopped`` 一旦被
+        # ``stop()`` 置上就再也不会清掉 —— 推送触发全被静默丢弃。
+        self._stopped = False
         if self.interval_s <= 0 or self.running:
             return
-        self._stopped = False
         self._timers = [
             asyncio.create_task(self._tick_loop(self.trigger, REASON_TIMER),
                                 name=f"wpp-sync-timer-{self.account_id}"),
@@ -236,6 +239,13 @@ class SyncFallback:
         pending, self._tasks = self._tasks, set()
         for t in pending:
             t.cancel()
+        # 取消之后必须**等它们真的收尾**：``stop()`` 的语义是「返回后没有在途拉取」，
+        # 而 ``disconnect()`` 紧接着就要关 client、清 ``_sync``；不等的话旧任务还能在
+        # 已关闭的 client 上再走一段（日志刷错误、游标被写坏）。当前任务自己跳过
+        # （等自己 = 死锁），正常调用点不会走到那。
+        current = asyncio.current_task()
+        await asyncio.gather(*(t for t in pending if t is not current),
+                             return_exceptions=True)
 
     async def _tick_loop(self, action: Callable[[str], Awaitable[Any]], reason: str) -> None:
         """每 ``interval_s`` 调一次 ``action(reason)``；失败只 warn（下一拍照来）。"""
