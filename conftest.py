@@ -54,6 +54,28 @@ def _local_prod_wxid() -> str:
 
 PROD_SELF_WXID = _local_prod_wxid()
 
+#: 宿主机上**生产**凭证与白名单类 env —— 每个用例前一律清掉。
+#:
+#: 为什么必须显式清：本仓的测试就跑在**生产机**上，而 gateway 的启动 shell 里带着
+#: ``WECHATPRO_AUTHCODE`` / ``WECHATPRO_SEND_ALLOWLIST`` 等生产值。它们会经由
+#: ``env_compat.gate_env`` / ``netguard.env_allowlist`` 漏进用例：
+#:
+#: * ``unified_allowlist()`` 读到生产群号 ⇒ 出站闸把 ``wxid_a`` 拦掉 ⇒
+#:   ``test_api_retry`` 等 11 条用例在"本来该绿"的机器上变红（2026-10-31 实测）；
+#: * 更糟的是"不红但错"：用例拿着生产 authcode 去构造 client，一旦某条路径真的发了
+#:   请求，就是在用生产凭据打通话 —— 测试绝不该有这种可能。
+#:
+#: 只清**凭证 / 白名单 / 授权开关**这一类；``WECHATPRO_ACCOUNTS_DIR`` /
+#: ``WECHATPRO_SQLITE_PATH`` 这类"测试模块自己在 import 期设置"的路径键**不清**
+#: （``test_console_api`` 在模块级改写它们），DB 键由 ``_env_guard`` 单独把关。
+PRODUCTION_ENV_KEYS = (
+    "WECHATPRO_AUTHCODE", "WECHATPRO_AUTH_CODE", "WECHATPRO_AUTHCODE_LIVETEST",
+    "WECHATPRO_TOKEN_KEY", "WECHATPRO_WEBHOOK_SECRET",
+    "WPP_GATEWAY_TOKEN", "WPP_MCP_AUTHCODE",
+    "WECHATPRO_SEND_ALLOWLIST", "WECHATPRO_ALLOWED_USERS",
+    "WECHATPRO_ALLOW_ALL_USERS", "WECHATPRO_ALLOW_GLOBAL_CREDENTIALS",
+)
+
 
 # --------------------------------------------------------------------- 安全护栏
 
@@ -186,7 +208,8 @@ def _test_env(request, monkeypatch):
     # 专门测「未配置」的用例自己 delenv 覆盖。受保护身份集合同理默认清空。
     monkeypatch.setenv("WECHATPRO_API_BASE", "https://vendor.test")
     for k in ("WECHATPRO_WS_URL", "WECHATPRO_PROTECTED_WXIDS",
-              "WECHATPRO_PROTECTED_FINGERPRINTS", "WECHATPRO_ALLOW_PRODUCTION_WXID"):
+              "WECHATPRO_PROTECTED_FINGERPRINTS", "WECHATPRO_ALLOW_PRODUCTION_WXID",
+              *PRODUCTION_ENV_KEYS):
         monkeypatch.delenv(k, raising=False)
     if "network" not in request.keywords and "db" not in request.keywords:
         # 真库用例要连 localhost —— 它的 host 由 R3 白名单 + 库名三道闸管着（见 _env_guard）
