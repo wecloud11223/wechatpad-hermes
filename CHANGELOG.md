@@ -72,8 +72,8 @@
 
 ## v3.0.0 — 2026-10-26
 
-WPP Cloud 专用分支（插件名 `wpp-cloud-platform`；原 `wechatpadpro-platform`
-vendor 直连树保持不动）。
+对接云端托管网关（插件 id 沿用 `wpp-cloud-platform`，Hermes 平台名沿用
+`wechatpadpro`：工具名、配置键与定时投递变量都依赖它）。
 
 - **出站**：`https://<host>/api/v1/gateway` + `Authorization: Bearer wxa_...`；
   不再拼 `/api`、不再带 `?authcode=`。
@@ -349,7 +349,7 @@ Hermes Python 侧重写完成，接管生产（profile `wpp-wechat`，单账号 
 - `plugin.yaml` 补 `provides_hooks: [pre_llm_call]`，doctor 不再报「hook not listed」。
 - `wpp_messages.new_msg_id` 定义漂移修复：5264 行 NULL 回填为 `#<id>` 占位后改为
   `NOT NULL DEFAULT ''`（唯一键 `uk_account_msg` 恢复对 NULL 的去重能力）。
-- 旧树 `~/dev/wpp-hermes` 归档到 `~/dev/_archive/wpp-hermes-legacy-20261018`。
+- 早期直连树已归档到 `~/dev/_archive/` 下的 legacy 目录，仅供追溯。
 - 新增 `tools/fix_new_msg_id_drift.py`（人肉执行）与 `tools/diag_new_msg_id_dups.py`（只读诊断）。
 - 群聊触发规则定稿：**被 @ 必回**（`group_mention` 直通 agent），**其余消息交心流 judge**
   （`heartflow_candidate`）。据此移除 `requireAtMention` 死键（账号模型/适配器/示例配置/
