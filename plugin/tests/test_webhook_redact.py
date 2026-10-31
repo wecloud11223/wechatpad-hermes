@@ -36,6 +36,14 @@ def test_mask_secret_shape():
     assert TOKEN_A not in mask_secret(TOKEN_A)
 
 
+def test_a_short_secret_is_masked_completely():
+    """短串不许"露头 4 尾 2" —— 6 位的 token 那样等于明文返回。"""
+    for short in ("abc123", "abcdefgh"):
+        assert mask_secret(short) == "****", short
+        assert short not in mask_secret(short)
+    assert mask_secret("abcdefghi") == "abcd...hi"   # 9 位起才留头尾
+
+
 def test_redact_is_by_value_and_identity_without_token():
     path = f"/wechatpadpro/{TOKEN_A}/default/webhook"
     masked = redact_webhook_path(path, TOKEN_A)

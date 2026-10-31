@@ -29,10 +29,15 @@ from collections.abc import Iterable
 
 
 def mask_secret(secret: str) -> str:
-    """与 authcode 同一套 mask：留头 4 尾 2，够人工核对"是不是同一条"，又不给可用信息。"""
+    """与 authcode 同一套 mask：留头 4 尾 2，够人工核对"是不是同一条"，又不给可用信息。
+
+    ⚠️ 短于 9 位的串**整体遮掉**：6 位的 token 露头 4 + 尾 2 就是把整串还回去
+    （``mask_secret("abc123") == "abc123"`` 那种形状）。控制台诊断接口会把 webhook URL
+    连同 token 一起给出去，这条不能只对长 token 成立。
+    """
     if not secret:
         return "(empty)"
-    if len(secret) <= 4:
+    if len(secret) <= 8:
         return "****"
     return f"{secret[:4]}...{secret[-2:]}"
 
