@@ -4,6 +4,36 @@
 
 ---
 
+## v3.1.3 — 2026-11-10
+
+心流的**可观测性与校准**：修「已经发出去的心流回复被记成没发」，并新增按目标接话率
+校准逐群阈值的 `/heartflow calibrate`。
+
+- **修：工具路径发送不回写心流台账（P0）**。心流接管后模型是用
+  `wpp_quote_reply` / `wpp_send_text` 把话说出去的，这两条走 `toolkit/msg.py`，**不经过**
+  `adapter.send` —— 而 `_hf_note_sent` 只挂在那里。于是 `begin_pending_send` 开的窗口
+  没人归账，`expire_stale_judged` 把**已经发出去**的回复记成
+  `suppressed/no-deliver-outcome`：
+  - 现场表现是「台账显示这个群整周没说话」（11-03~11-09 移动群 sent=0），
+    而同一窗口 `wpp_messages` 里有 16 条出站，其中 14 条高分明细全是这个形态；
+  - 更隐蔽的后果：学习闭环拿不到正样本 ⇒ 阈值永远冻在基线 ⇒ 越跑越安静。
+  现在 `_persist_tool_outbound` 与 `quote_reply._persist_sent` 都会调
+  `heartflow.note_sent`（成败按 `platform.outbound.send_ok`，msgId 读
+  `extract_outbound_msg_ids`，与适配器侧同一判据）；归账失败只记 debug，不把一次已完成
+  的发送翻成失败。用例：`tests/test_hf_tool_send.py`。
+- **新增 `/heartflow calibrate [天数] [目标接话率] [apply]`**：按近 N 天
+  `judge_overall` 的目标分位数反推逐群阈值（向下对齐 0.05 网格、钳在
+  `learning.bandMin..bandMax`），默认**只预览**；`apply` 走
+  `apply_hf_threshold_change`（群状态 + 审计行 + 内存缓存一起更新，审计里可回滚）。
+  为什么需要它：自动学习的反馈信号是「发出去之后有没有人接」，而群里没人接一句不等于
+  那句话不该说 —— 沉默样本占多数时学习攒不到可采信样本，阈值就冻住了；calibrate 直接
+  回答老板真正关心的量（「这个群让它说多少」）。用例：`test_hf_commands.py` §12。
+- **`profile band capped` 告警去重**：这条原来**每条消息**打一条 WARNING（生产一周
+  166 条），同一种形态重复刷屏把真故障（OSS 缺凭据 / MCP 401）淹掉。现在同一
+  `(画像建议, 生效值)` 只告警一次，形态变化会重新报。
+- **验证**：`plugin/tests/heartflow` 702 passed；`tests/platform/test_hf_commands.py`
+  80 passed（含新增 §12 的 7 条）；新增 `tests/test_hf_tool_send.py` 4 passed。
+
 ## v3.1.2 — 2026-10-31
 
 对 v3.1.1 的**复审收口**：两处「停机/重连会永久丢消息」的窗口，外加一条与真实响应头形态

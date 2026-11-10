@@ -1,7 +1,7 @@
 name: wpp-cloud-platform
 label: WechatPad · 个人微信 Pad 协议云端托管
 kind: platform
-version: 3.1.2
+version: 3.1.3
 author: wecloud11223
 
 manifest_version: 2          # v2 解析路径（未知字段 warning 而非静默丢弃）
