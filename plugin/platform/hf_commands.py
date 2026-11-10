@@ -74,6 +74,22 @@ REPORT_DAYS_DEFAULT = 7
 #: 停摆金丝雀的告警线（天）—— 超过它就在「上次真发言」那行挂 ⚠️。
 STALL_WARN_DAYS = 3
 
+#: ``calibrate`` 的缺省回看天数 / 目标接话率 / 最少样本 / 阈值步长。
+#:
+#: 为什么是「按分数分位数反推阈值」而不是继续等自动学习：``learning`` 的反馈信号是
+#: 「发出去之后有没有人接」，而群里 bot 的一句话没人回**并不等于**这句话不该说
+#: （2026-10 实测：华为群 0.50 阈值 ⇒ 28% 接话、全员群 0.60 ⇒ 19%，两个群都在健康区间，
+#: 但沉默样本占多数，自动学习只能攒不到可采信样本 ⇒ 阈值长期冻在基线上）。
+#: 校准直接回答老板真正关心的那个问题：**「这个群我打算让它说多少」**。
+CALIBRATE_DAYS_DEFAULT = 30
+CALIBRATE_DAYS_MIN = 7
+CALIBRATE_DAYS_MAX = 30
+CALIBRATE_TARGET_RATE = 0.20
+CALIBRATE_MIN_SAMPLES = 20
+CALIBRATE_STEP = 0.05
+#: 与现阈值差小于它就不动（避免每跑一次都抖动一格）。
+CALIBRATE_DEADBAND = 0.02
+
 #: 开关别名 —— 与 ``commands._handle_feature_toggle`` 认的写法**必须**是同一组
 #: （旧实现认 ``1/true/yes``，删掉别名就是悄悄改行为）。
 _ON_OFF = frozenset({"on", "off", "1", "true", "yes", "0", "false", "no"})
@@ -112,6 +128,8 @@ def handle(account_id: str, args: Sequence[str], *, adapter: Any = None) -> str:
         return _veto(account_id, arg_list)
     if sub == "report":
         return _report(account_id, arg_list)
+    if sub == "calibrate":
+        return _calibrate(account_id, arg_list)
     return _usage(account_id)
 
 
@@ -222,6 +240,7 @@ def _usage(account_id: str) -> str:
         "\n  或 /heartflow layers [群ID]"
         "\n  或 /heartflow veto [群ID]"
         "\n  或 /heartflow report [天数]"
+        "\n  或 /heartflow calibrate [天数] [目标接话率] [apply]"
         f"\n状态: {state}"
     )
 
@@ -920,3 +939,134 @@ def _report(account_id: str, args: Sequence[str]) -> str:
         budget=hf_budget.hf_budget_blocked_snapshot(),
         share_guard=hf_observe.hf_share_guard_snapshot(account_id, base_budget, hf_cfg, now),
     ))
+
+
+# ------------------------------------------------------------------ calibrate
+
+
+def plan_hf_calibration(
+    scores: Sequence[float],
+    target_rate: float,
+    band_min: float,
+    band_max: float,
+    step: float = CALIBRATE_STEP,
+) -> tuple[float, float] | None:
+    """按「目标接话率」反推阈值（纯函数）。返回 ``(阈值, 预计接话率)``；无样本 ⇒ ``None``。
+
+    ``judge_overall`` 的分布是**双峰**的（实测各群 p50≈0.2–0.4、p85≈0.63–0.76），
+    所以阈值落在两峰之间的空档里时，挪 0.05 就会让接话率翻倍 —— 这正是
+    「阈值看着只差一点、群里却整周不说话」的来源。按分位数反推 + 向下对齐到
+    ``step`` 网格，比在空档里猜一个中间值稳。
+
+    阈值永远钳在 ``[band_min, band_max]``：校准只改「说多少」，不推翻老板拍的地板
+    （0.5 = 质量底线）与上限（0.9 = 不许只念稿不发）。
+    """
+    vals = sorted(float(s) for s in scores
+                  if isinstance(s, (int, float)) and not isinstance(s, bool))
+    n = len(vals)
+    if n == 0:
+        return None
+    rate = min(max(float(target_rate), 0.0), 1.0)
+    # 想让 ceil(n*rate) 条过线 ⇒ 第 n-keep 个分数（0 基）就是及格线候选
+    keep = 0 if rate <= 0 else max(1, math.ceil(n * rate))
+    idx = min(n - 1, max(0, n - keep))
+    raw = vals[idx]
+    grid = math.floor(raw / step + 1e-9) * step
+    thr = round(min(max(grid, float(band_min)), float(band_max)), 4)
+    implied = sum(1 for v in vals if v >= thr) / n
+    return thr, implied
+
+
+def _calibrate(account_id: str, args: Sequence[str]) -> str:
+    """``/heartflow calibrate [天数] [目标接话率] [apply]``：按目标接话率校准逐群阈值。
+
+    默认**只预览**：把每个白名单群的「现阈值 / 实际接话率 / 建议阈值 / 预计接话率」
+    列出来，老板看清楚了再带 ``apply`` 落库。写入走
+    :func:`heartflow.learn.apply_hf_threshold_change` —— 与自动学习同一条路：
+    群状态 + 审计行 + 内存缓存三者一起更新，``wpp_hf_threshold_audit`` 里留痕可回滚。
+
+    ``apply`` 写的是**群级 learned 阈值**（不是账号级）：只影响这个群，
+    ``/heartflow threshold`` 仍改账号底。
+    """
+    from ..data import repo_hf  # 延迟导入，理由同本模块其它命令
+
+    days = CALIBRATE_DAYS_DEFAULT
+    target = CALIBRATE_TARGET_RATE
+    apply_changes = False
+    for tok in args[1:]:
+        low = str(tok).strip().lower()
+        if low in ("apply", "--apply", "-a", "yes", "写入", "应用"):
+            apply_changes = True
+            continue
+        v = _num_of(tok)
+        if v is None:
+            continue
+        if 0 < v <= 1:
+            target = v                      # 0–1 ⇒ 目标接话率
+        else:
+            days = min(max(int(math.floor(v)), CALIBRATE_DAYS_MIN), CALIBRATE_DAYS_MAX)
+
+    hf_cfg = _hf_cfg(account_id)
+    groups = _str_list(hf_cfg.get("whitelistGroups"))
+    if not groups:
+        return "心流群白名单为空 —— 没有可校准的群（先 /heartflow group add <群ID>）"
+
+    LRN = hf_learn.resolve_hf_learning(hf_cfg)
+    now = _now()
+    since = now - days * DAY_SEC
+    try:
+        rows = repo_hf.list_recent_judged_scores(account_id, since, 20000)
+    except Exception as exc:  # noqa: BLE001 —— 命令面契约：不抛
+        return f"校准失败：读台账出错（{exc}）"
+
+    by_group: dict[str, list[float]] = {}
+    for r in rows:
+        gid = str(r.get("group_id") or "")
+        score = _num_of(r.get("judge_overall"))
+        if gid and score is not None:
+            by_group.setdefault(gid, []).append(float(score))
+
+    head = (f"心流校准（近 {days} 天，目标接话率 {target:.0%}，"
+            f"{'写入' if apply_changes else '仅预览，加 apply 才写'}）")
+    lines = [head]
+    changed = 0
+    for gid in groups:
+        scores = by_group.get(gid, [])
+        n = len(scores)
+        if n < CALIBRATE_MIN_SAMPLES:
+            lines.append(f"• {gid}: 近 {days} 天判过 {n} 条 < {CALIBRATE_MIN_SAMPLES}，跳过")
+            continue
+        try:
+            cur = float(hf_learn.resolve_hf_effective_threshold(
+                account_id, gid, hf_cfg, now).threshold)
+        except Exception:  # noqa: BLE001 —— 读不到生效值就退回账号底
+            cur = hf_learn.resolve_reply_threshold(hf_cfg)
+        plan = plan_hf_calibration(scores, target, LRN["bandMin"], LRN["bandMax"])
+        if plan is None:
+            lines.append(f"• {gid}: 无可采信分数，跳过")
+            continue
+        new, implied = plan
+        cur_rate = sum(1 for v in scores if v >= cur) / n
+        if abs(new - cur) < CALIBRATE_DEADBAND:
+            lines.append(f"• {gid}: {cur:.2f}（实际 {cur_rate:.0%} / {n} 条）已达标，不动")
+            continue
+        if apply_changes:
+            try:
+                hf_learn.apply_hf_threshold_change(
+                    account_id, gid, cur, new,
+                    f"manual calibrate: target={target:.0%} n={n} "
+                    f"rate {cur_rate:.0%}→{implied:.0%}",
+                    n, sum(1 for v in scores if v >= new), now)
+                changed += 1
+            except Exception as exc:  # noqa: BLE001 —— 单群失败不影响其它群
+                lines.append(f"• {gid}: 写入失败（{exc}）")
+                continue
+        lines.append(f"• {gid}: {cur:.2f}（实际 {cur_rate:.0%} / {n} 条）→ "
+                     f"{new:.2f}（预计 {implied:.0%}）")
+    if apply_changes:
+        lines.append(f"已写入 {changed} 个群（审计见 /heartflow status 的阈值审计；"
+                     "画像 band 与分层仍在阈值之上生效）")
+    else:
+        lines.append("未写入任何配置。确认后发：/heartflow calibrate "
+                     f"{days} {target:g} apply")
+    return "\n".join(lines)

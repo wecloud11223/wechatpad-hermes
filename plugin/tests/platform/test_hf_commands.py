@@ -68,6 +68,7 @@ HF_READS: dict[str, Any] = {
     "mark_veto": None,
     "list_sent_counts_recent": [],
     "list_closed_since": [],
+    "list_recent_judged_scores": [],
 }
 MSG_READS: dict[str, Any] = {
     "list_bot_msg_share": [],
@@ -811,3 +812,93 @@ def test_commands_imports_hf_commands_inside_the_dispatcher():
     top = _module_level_imports(CMD_SRC)
     assert not [x for x in top if "hf_commands" in x], top
     assert "from . import hf_commands" in CMD_SRC
+
+
+# ================================================= §12 按目标接话率校准（calibrate）
+#
+# 背景：``learning`` 的反馈信号是「发出去之后有没有人接」。群里没人接一句话**不等于**
+# 那句话不该说 —— 实测两个群都在健康区间（0.50→28%、0.60→19%），但沉默样本占多数，
+# 自动学习攒不到可采信样本 ⇒ 阈值冻在基线上、管理群/移动群整周 0 发言。
+# ``calibrate`` 把老板真正关心的量（「这个群让它说多少」）直接算出来：
+# 取近 N 天 ``judge_overall`` 的目标分位数当阈值。
+
+
+def _scores(n: int, lo: float = 0.1, hi: float = 0.9) -> list[float]:
+    """构造 n 个均匀分布分数（纯构造，不代表生产分布）。"""
+    return [round(lo + (hi - lo) * i / max(1, n - 1), 3) for i in range(n)]
+
+
+def test_plan_calibration_lands_on_the_target_quantile():
+    """100 条均匀分 + 目标 20% ⇒ 阈值落在 p80 附近，预计接话率贴目标。"""
+    plan = H.plan_hf_calibration(_scores(100), 0.20, 0.5, 0.9)
+    assert plan is not None
+    thr, implied = plan
+    assert 0.70 <= thr <= 0.80, thr
+    assert 0.15 <= implied <= 0.25, implied
+
+
+def test_plan_calibration_never_breaks_the_boss_band():
+    """全低分也只降到 bandMin（0.5 是老板拍的质量地板），全高分也不越过 bandMax。"""
+    low = H.plan_hf_calibration([0.05] * 40, 0.20, 0.5, 0.9)
+    high = H.plan_hf_calibration([0.99] * 40, 0.95, 0.5, 0.9)
+    assert low == (0.5, 0.0)
+    assert high is not None and high[0] == 0.9
+
+
+def test_plan_calibration_without_scores_returns_none():
+    assert H.plan_hf_calibration([], 0.2, 0.5, 0.9) is None
+
+
+def test_calibrate_preview_does_not_write(account, db, monkeypatch):
+    """默认只预览：**写入函数一次都不许被调**（校准动的是生产发言频率）。"""
+    calls: list[tuple] = []
+    monkeypatch.setattr(L, "apply_hf_threshold_change",
+                        lambda *a, **kw: calls.append((a, kw)))
+    db["list_recent_judged_scores"] = (
+        [{"group_id": "g1@chatroom", "judge_overall": s} for s in _scores(60)]
+        + [{"group_id": "g2@chatroom", "judge_overall": s} for s in _scores(60)])
+
+    out = H.handle(ACC, ["calibrate"])
+    assert "仅预览" in out
+    assert "g1@chatroom" in out and "g2@chatroom" in out
+    assert calls == []
+    assert "apply" in out                      # 告诉老板怎么落地
+
+
+def test_calibrate_apply_writes_one_change_per_group(account, db, monkeypatch):
+    """``apply`` 走 ``apply_hf_threshold_change``（群状态+审计+内存三者一起）。"""
+    calls: list[dict] = []
+
+    def fake_apply(account_id, group_id, old, new, reason, total, engaged, now_sec):
+        calls.append({"account_id": account_id, "group_id": group_id, "old": old,
+                      "new": new, "reason": reason, "total": total, "now": now_sec})
+
+    monkeypatch.setattr(L, "apply_hf_threshold_change", fake_apply)
+    db["list_recent_judged_scores"] = [
+        {"group_id": "g1@chatroom", "judge_overall": s} for s in _scores(60)]
+
+    out = H.handle(ACC, ["calibrate", "20", "0.2", "apply"])
+    assert len(calls) == 1, out
+    c = calls[0]
+    assert c["account_id"] == ACC and c["group_id"] == "g1@chatroom"
+    assert c["old"] == pytest.approx(0.6)
+    assert 0.6 < c["new"] <= 0.9
+    assert "manual calibrate" in c["reason"] and "n=60" in c["reason"]
+    assert "已写入 1 个群" in out
+
+
+def test_calibrate_skips_groups_with_too_few_samples(account, db, monkeypatch):
+    monkeypatch.setattr(L, "apply_hf_threshold_change", lambda *a, **kw: (_ for _ in ()).throw(
+        AssertionError("样本不足时不许写")))
+    db["list_recent_judged_scores"] = [
+        {"group_id": "g1@chatroom", "judge_overall": s} for s in _scores(5)]
+
+    out = H.handle(ACC, ["calibrate", "apply"])
+    assert "跳过" in out and "g1@chatroom" in out
+
+
+def test_calibrate_survives_a_broken_ledger(account, db):
+    """台账坏掉只回一句话，不抛（命令面契约）。"""
+    db["list_recent_judged_scores"] = RuntimeError("ledger 挂了")
+    out = H.handle(ACC, ["calibrate"])
+    assert "校准失败" in out and "ledger 挂了" in out

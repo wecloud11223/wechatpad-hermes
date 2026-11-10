@@ -1154,9 +1154,28 @@ def _sender_display_name(account_id: str, group_id: str, msg: Any) -> str:
     return name or "未知"
 
 
+_BAND_CAPPED_LOGGED: dict[str, tuple[float, float]] = {}
+
+
+def _log_band_capped_once(group_id: str, eff: Any, max_raise: float) -> None:
+    """画像抬升被 band 截断：**每种形态只告警一次**（画像/生效值不变就不再重复）。
+
+    为什么去重：这条原来是**每条消息**打一条 WARNING（生产一周 166 条），同一种
+    形态重复 166 遍不提供任何新信息，却把真正的故障（OSS 缺凭据、MCP 401）淹掉。
+    形态一变（画像建议或生效值变了）会重新告警 —— 去重的是噪音，不是信息。
+    """
+    key = (round(float(eff.band or 0.0), 3), round(float(eff.threshold), 3))
+    if _BAND_CAPPED_LOGGED.get(group_id) == key:
+        return
+    _BAND_CAPPED_LOGGED[group_id] = key
+    log.warning(
+        "[WPP HF] profile band capped: group=%s 画像建议 %.2f → 生效 %.2f "
+        "（上限 = 基线 +%.2f；画像不是重新定义及格线的地方）",
+        group_id, eff.band or 0.0, eff.threshold, max_raise)
+
+
 async def maybe_engage(adapter: Any, acct: Any, msg: Any, pipeline: Any = None) -> bool:
     """心流接管入口（``adapter._try_heartflow`` 调）—— 返回 ``True`` = 放行给主 LLM。
-
     流程即模块 docstring 的五步；``False`` 覆盖所有"不接管"的情形（闸拒 / judge 不过 /
     judge 没出结果 / 异常）。异常**吞掉并记账**：心流判不出来不该让这条消息整体失败
     （适配器外层还有一道 try，但那里只能记一条 warning，分不清是哪一步坏的）。
@@ -1185,11 +1204,7 @@ async def maybe_engage(adapter: Any, acct: Any, msg: Any, pipeline: Any = None) 
 
         eff = L.resolve_hf_effective_threshold(account_id, group_id, cfg, now_sec)
         if eff.band_capped:
-            log.warning(
-                "[WPP HF] profile band capped: group=%s 画像建议 %.2f → 生效 %.2f "
-                "（上限 = 基线 +%.2f；画像不是重新定义及格线的地方）",
-                group_id, eff.band or 0.0, eff.threshold,
-                profile.resolve_hf_profile_cfg(cfg).max_raise)
+            _log_band_capped_once(group_id, eff, profile.resolve_hf_profile_cfg(cfg).max_raise)
         base = L.resolve_reply_threshold(cfg)
         eff_cfg: Mapping[str, Any] = cfg if abs(eff.threshold - base) < 1e-9 else {
             **cfg, "replyThreshold": eff.threshold}
