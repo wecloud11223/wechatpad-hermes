@@ -115,6 +115,31 @@ def _localize_generated_image(image: str, prefix: str) -> str:
     return path
 
 
+def _note_hf_tool_send(account_id: str, peer_id: str, text: str, *,
+                       ok: bool, msg_id: str | None = None) -> None:
+    """把**工具路径**的发送结果回写给心流（``heartflow.note_sent``）。
+
+    为什么必须有这一刀：心流接管后，模型是用 ``wpp_quote_reply`` / ``wpp_send_text``
+    把话说出去的 —— 这两条**不走** ``adapter.send``，而 ``_hf_note_sent`` 只挂在
+    那里。没有本函数时，心流的待交付登记（``begin_pending_send`` 开的窗口）永远没人
+    归账，``expire_stale_judged`` 就把**已经发出去**的回复记成
+    ``suppressed/no-deliver-outcome``：
+
+    * 台账看起来"这个群整周没说话"（2026-11 移动群 7 天 0 条 sent，而同窗口
+      ``wpp_messages`` 里有 16 条出站 —— 其中 14 条高分明细全是这个形态）；
+    * 学习闭环拿不到正样本 ⇒ 阈值永远冻在基线，越跑越安静。
+
+    失败一律吞掉：归账是附带动作，不能让一次已完成的发送变成"失败"。
+    """
+    try:
+        from ..inbound.heartflow import heartflow as hf
+
+        hf.note_sent(account_id, peer_id, text, success=bool(ok),
+                     message_id=(msg_id or None))
+    except Exception as exc:  # noqa: BLE001 —— 归账失败不影响已完成的发送
+        log.debug("[WPP:%s] 心流归账失败（工具发送已成功）: %s", account_id, exc)
+
+
 def _persist_tool_outbound(account_id: str, peer_id: str, content: str, resp,
                            msg_type: str = "text") -> None:
     """落库工具路径的出站记录（``wpp_send_text`` / ``wpp_send_image``）。
@@ -148,6 +173,10 @@ def _persist_tool_outbound(account_id: str, peer_id: str, content: str, resp,
             metrics.inc_outbound_persist(True)
         except Exception:  # noqa: S110, BLE001 —— 埋点失败不影响落库结论
             pass
+        # 心流归账：工具发送不走 adapter.send，必须在这里把结果回写，
+        # 否则台账把已发出的心流回复记成 no-deliver-outcome（见 _note_hf_tool_send）。
+        _note_hf_tool_send(account_id, peer_id, content, ok=outbound.send_ok(resp),
+                           msg_id=resp_ids.new_msg_id or resp_ids.msg_id)
     except Exception as exc:  # noqa: BLE001
         try:
             from ..core import metrics
@@ -855,6 +884,9 @@ def register_msg_tools(ctx, adapter_getter) -> None:
                     content=text)
             except Exception as exc:  # noqa: BLE001 —— 入库是附带动作
                 log.warning("[WPP:%s] quote_reply 入库失败（不影响发送）: %s", aid, exc)
+            # 心流归账（同 _persist_tool_outbound）：引用回复是心流最常用的出口。
+            _note_hf_tool_send(aid, to_wxid, text, ok=True,
+                               msg_id=msg_ids.new_msg_id or msg_ids.msg_id)
 
         if not outbound.quote_reply_fits(quote_text):
             # ★ 2026-10-18：引用气泡只渲染 500 字（vendor 侧同样 slice）⇒ 长正文走
