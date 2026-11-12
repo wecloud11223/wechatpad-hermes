@@ -103,7 +103,11 @@ MACHINERY_NOTICE_RE = re.compile(
     r"|^\s*(?:⏳|⚡|⏩|↪)\s*(?:Queued for the next turn|Subagent working"
     r"|Compressing context|Interrupting current task|Steered into current run"
     r"|Redirected current run|Gateway .*?—\s*queued for the next turn"
-    r"|Gateway is .*?and is not accepting)",
+    r"|Gateway is .*?and is not accepting)"
+    # 2026-11-11/12 事故：模型后端 429 配额耗尽时，网关兜底把英文报错原文
+    # 「Billing or credits exhausted: HTTP 429: Allocated quota exce…」当最终回复发进群。
+    # 锚行首固定短语，正常业务话术不会以此开头。
+    r"|^\s*Billing or credits exhausted",
     re.MULTILINE,
 )
 
