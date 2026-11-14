@@ -669,7 +669,9 @@ def test_persist_judged_inserts_with_all_columns(repo):
     assert set(repo.inserts[0]) == {"account_id", "inbound_msg_id", "group_id", "judged_at",
                                     "new_msg_id", "from_wxid", "msg_type", "content_head",
                                     "judge_overall", "dim_r", "dim_w", "dim_s", "dim_t",
-                                    "dim_c", "effective_threshold", "energy"}
+                                    "dim_c", "effective_threshold", "energy",
+                                    "judge_degraded"}   # v3.1.4：兜底打分标记列
+    assert repo.inserts[0]["judge_degraded"] == 0, "默认非降级样本"
 
 
 def test_persist_judged_is_non_fatal(repo, caplog):
