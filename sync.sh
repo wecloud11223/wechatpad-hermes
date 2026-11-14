@@ -20,7 +20,11 @@ fi
 
 RSYNC=(rsync -a --delete
     --exclude 'accounts/'
-    --exclude 'data/'
+    # 2026-11-14 修：原先 `--exclude 'data/'` 把**代码包** plugin/data/ 整个挡在同步外
+    # （schema.sql / repo_hf.py 改完永远同步不过去，v3.1.4 部署时踩实）。
+    # 真正该保的是**运行数据**（sqlite/快照类文件），按文件型排除。
+    --exclude '*.db' --exclude '*.db-*' --exclude '*.sqlite*' --exclude '*.sqlite3*'
+    --exclude 'data/*.json'
     --exclude '__pycache__/'
     --exclude '*.pyc'
     --exclude '.pytest_cache/'
