@@ -87,7 +87,7 @@ def ev(stats: dict, learned=None, base=0.6, **kw) -> L.HfThresholdEval:
     return L.eval_hf_threshold(stats, learned, base, params(**kw))
 
 
-def _s(signal, engaged, *, judge_overall=None, effective_threshold=None):
+def _s(signal, engaged, *, judge_overall=None, effective_threshold=None, degraded=False):
     """一条已收敛样本（列名与 ``get_closed_recent`` 的真查询一致）。
 
     ``sent_at`` 是 B9 起必需的一列：调阈侧按**样本自己那一小时**查本底。缺了它那条
@@ -95,9 +95,11 @@ def _s(signal, engaged, *, judge_overall=None, effective_threshold=None):
 
     v1.16.2 起真查询还带 ``judge_overall / effective_threshold``（silence-exempt 用）；
     不传时**不出现**这两个键 —— 模拟「旧行/无分」，豁免必须退回旧行为（宁严勿宽）。
+    ``degraded=True`` = 兜底端点打的分行（v2 调阈守卫），必须被请出统计。
     """
     row = {"engaged": 1 if engaged else 0, "closed_at": NOW - 10,
-           "engage_signal": signal, "sent_at": NOW - 10}
+           "engage_signal": signal, "sent_at": NOW - 10,
+           "judge_degraded": 1 if degraded else 0}
     if judge_overall is not None:
         row["judge_overall"] = judge_overall
     if effective_threshold is not None:
@@ -1148,7 +1150,7 @@ def test_sweep_passes_the_same_whitelist_filter_to_all_three_passes(sweep, repo)
 
 def test_sweep_adapts_and_logs(sweep, repo, caplog):
     """一轮完整的调阈：20 条里 2 条被接话 ⇒ rate 0.10 ⇒ 0.6 → 0.65 + 审计一行。"""
-    detail = ("rate=0.100 total=20 engaged=2 skipped=0 exempt=0 "
+    detail = ("rate=0.100 total=20 engaged=2 skipped=0 exempt=0 degraded=0 "
               "ambientP=0.000 sig=silence:18,quote:2")
     repo.closed_groups = ["gA"]
     repo.samples_by_group = {"gA": [_s("silence", False)] * 18 + [_s("quote", True)] * 2}
@@ -1209,6 +1211,48 @@ def test_sweep_exempt_counts_in_audit_and_never_double_counts_as_skipped(sweep, 
     assert "skipped=0" in detail and "exempt=5" in detail
     assert "total=15" in detail, "豁免的 5 条不进统计（样本窗 20 = 5 豁免 + 15 可用）"
     assert L.get_learned_threshold("acct", "gA") == 0.65
+
+
+def test_sweep_judge_degraded_samples_never_enter_stats(sweep, repo, monkeypatch):
+    """兜底端点样本（judge_degraded=1）不进调阈统计（2026-11-13 429 误抬阈回归门）。
+
+    20 条 silence 全 engaged=0，其中 12 条是端点抖动期由兜底模型打分：
+    旧口径 total=20 → rate 0 → 抬阈；新口径只剩 8 条 < minSample(10) → 不许动。
+    """
+    repo.closed_groups = ["gA"]
+    repo.samples_by_group = {"gA": (
+        [_s("silence", False, degraded=True)] * 12
+        + [_s("silence", False)] * 8)}
+    repo.group_states = [{"group_id": "gA", "learned_threshold": 0.6, "last_change_at": None}]
+
+    seen: dict = {}
+    orig = L.eval_hf_threshold
+
+    def spy(stats, *a, **kw):
+        seen.update(stats)
+        return orig(stats, *a, **kw)
+
+    monkeypatch.setattr(L, "eval_hf_threshold", spy)
+    sweep_run(FakeAdapter(cfg_on(learning={"enabled": True})), "acct", NOW)
+
+    assert seen.get("total") == 8, "12 条兜底分被剔除，只剩 8 条进统计"
+    assert repo.upserts == [] and repo.audits == [], "8 < minSample ⇒ 不许抬阈"
+
+
+def test_sweep_degraded_counted_separately_in_audit(sweep, repo, caplog):
+    """审计字符串：degraded 单列，不许与 skipped/exempt 重叠计数。"""
+    repo.closed_groups = ["gA"]
+    repo.samples_by_group = {"gA": (
+        [_s("silence", False, degraded=True)] * 5
+        + [_s("silence", False, judge_overall=0.62, effective_threshold=0.60)] * 20)}
+    repo.group_states = [{"group_id": "gA", "learned_threshold": 0.6, "last_change_at": None}]
+    with caplog.at_level(logging.INFO, logger=L.__name__):
+        sweep_run(FakeAdapter(cfg_on(learning={"enabled": True})), "acct", NOW)
+
+    assert len(repo.upserts) == 1, "20 条擦边负仍够 minSample ⇒ 抬阈照常（degraded 不拦收敛力）"
+    detail = repo.upserts[0]["last_change_reason"]
+    assert "degraded=5" in detail and "exempt=0" in detail and "skipped=0" in detail
+    assert "total=15" in detail, "样本窗 20 条 = 5 兜底剔除 + 15 可用（窗口按 sampleWindow 截断）"
 
 
 def test_sweep_exempt_disabled_restores_old_self_lock(monkeypatch, sweep, repo, caplog):

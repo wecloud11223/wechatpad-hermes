@@ -44,7 +44,7 @@ SCHEMA_TEXT = M.SCHEMA_FILE.read_text(encoding="utf-8")
 #: 从文件里数出来的期望值（**改 schema 时必须跟着改** —— 这正是它的作用：
 #: 让"顺手加一列"这件事在 diff 里显形，而不是悄悄漂进线上）。
 EXPECTED_TABLES = 20
-EXPECTED_COLUMNS = 198
+EXPECTED_COLUMNS = 199   # v3.1.4: wpp_hf_ledger.judge_degraded
 EXPECTED_INDEXES = 37
 
 

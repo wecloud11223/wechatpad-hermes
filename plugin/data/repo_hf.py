@@ -360,7 +360,7 @@ def get_closed_recent(
     rows = c.query(
         """
         SELECT engaged, closed_at, engage_signal, sent_at,
-               judge_overall, effective_threshold
+               judge_overall, effective_threshold, judge_degraded
         FROM wpp_hf_ledger
         WHERE account_id = %s AND group_id = %s AND status = 'closed' AND engaged IS NOT NULL
         ORDER BY closed_at DESC LIMIT %s

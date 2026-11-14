@@ -1201,9 +1201,16 @@ async def run_sweep(adapter: Any, account_id: str, now_sec: int | None = None) -
             usable: list[Mapping[str, Any]] = []
             ambient_sum = 0.0
             exempted = 0
+            degraded = 0
             for s in samples:
                 at = s.get("sent_at")
                 if isinstance(at, bool) or not isinstance(at, (int, float)) or at <= 0:
+                    continue
+                # 兜底端点打的分与主 judge 不同源 —— 这类样本既不计负也不计正：
+                # 否则端点抖一天的 429 会被学成「内容失宠」，阈值连日 +0.05 直到封顶
+                # （2026-11-13 移动群/全员群 0.60→0.90 事故的直接教训）。
+                if s.get("judge_degraded"):
+                    degraded += 1
                     continue
                 ambient_p = ambient.get(
                     f"{group_id}|{budget.hf_local_hour(int(at))}", 0.0)
@@ -1220,8 +1227,8 @@ async def run_sweep(adapter: Any, account_id: str, now_sec: int | None = None) -
             if not usable:
                 # （Py 侧没有 TS 那份「群级当前小时本底」单值 —— B9 起按样本自己那一小时取，
                 #   所以这里不报 ambientP：报 0 会假装知道一个并不存在的数。）
-                log.debug("[WPP HF] no informative sample: group=%s window=%d exempt=%d",
-                          group_id, len(samples), exempted)
+                log.debug("[WPP HF] no informative sample: group=%s window=%d exempt=%d degraded=%d",
+                          group_id, len(samples), exempted, degraded)
                 continue
             # 审计里报的是**可采信样本的本底均值**（与 ``/heartflow report`` 的
             # ``HfEngagementSummary.ambient_p`` 同口径：那份也是逐样本累加后取均值）。
@@ -1250,8 +1257,8 @@ async def run_sweep(adapter: Any, account_id: str, now_sec: int | None = None) -
                 continue
             learned_prev = None if st is None else st.get("learned_threshold")
             old_effective = base_threshold if learned_prev is None else float(learned_prev)
-            detail = (f"{res.reason} skipped={len(samples) - len(usable) - exempted} "
-                      f"exempt={exempted} ambientP={_fixed(ambient_p, 3)} "
+            detail = (f"{res.reason} skipped={len(samples) - len(usable) - exempted - degraded} "
+                      f"exempt={exempted} degraded={degraded} ambientP={_fixed(ambient_p, 3)} "
                       f"sig={signal_histogram(usable)}")
             apply_hf_threshold_change(account_id, group_id, old_effective, res.new_threshold,
                                       detail, len(usable), engaged, ts)

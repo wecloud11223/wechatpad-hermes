@@ -2,6 +2,23 @@
 
 版本号与 `plugin/plugin.yaml` 的 `version` 保持一致；打 tag 用 `v<version>`。
 
+
+## v3.1.4 — 2026-11-13
+
+心流调阈不再把「judge 端点故障」学成「内容失宠」。
+
+- **事故**：11-11 token-plan 429 抖动当天起，移动群/全员群样本被兜底模型（deepseek）
+  打分，分数与主 judge 不同源 → 擦边/压低 → 回复发出后无人接话计负 → 学习闭环
+  两天内 0.60→0.90 连爬到硬顶（13 日 16:14），两群实际失去主动接话能力。
+  当日人工重置 0.60 并留审计（reason=manual reset 2026-11-13）。
+- **修复**：`wpp_hf_ledger` 新增 `judge_degraded TINYINT DEFAULT 0` ——
+  判分调用期间若兜底端点被启用（`metrics.judge_fallback_last_ts` 3s 新鲜度窗），
+  该样本落库标 1；调阈 sweep 直接把 degraded 样本请出统计（不计正不计负），
+  审计串新增 `degraded=N`（与 skipped/exempt 不重叠）。schema.sql 驱动，
+  启动时自动 ADD COLUMN（只加不改，R8）。
+- **测试**：`test_sweep_judge_degraded_samples_never_enter_stats`、
+  `test_sweep_degraded_counted_separately_in_audit` 两条回归门。
+
 ---
 
 ## v3.1.3 — 2026-11-10

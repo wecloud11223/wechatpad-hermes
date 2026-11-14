@@ -1250,6 +1250,10 @@ async def maybe_engage(adapter: Any, acct: Any, msg: Any, pipeline: Any = None) 
             dim_c=result.dimensions["continuity"],
             effective_threshold=eff.threshold,
             energy=st.energy,
+            # 兜底端点刚被启用（3s 新鲜度窗）⇒ 这条分是"另一个模型"打的，
+            # 标 judge_degraded=1，调阈 sweep 会把它请出统计（见 learn.py）。
+            judge_degraded=1 if (_metrics().judge_fallback_last_ts()
+                                 and time.monotonic() - _metrics().judge_fallback_last_ts() <= 3.0) else 0,
         )
         metrics = _metrics()
         if result.should_reply:
