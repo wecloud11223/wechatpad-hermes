@@ -62,22 +62,27 @@ def insert_judged(
     dim_r: float | None = None, dim_w: float | None = None, dim_s: float | None = None,
     dim_t: float | None = None, dim_c: float | None = None,
     effective_threshold: float | None = None, energy: float | None = None,
+    judge_degraded: int = 0,
     conn: db.Connection | None = None,
 ) -> int:
-    """落一条判定（``INSERT IGNORE``：同一入站消息只记一次）。"""
+    """落一条判定（``INSERT IGNORE``：同一入站消息只记一次）。
+
+    ``judge_degraded=1`` = 本次判分走了兜底端点（模型与主 judge 不同源）⇒
+    调阈 sweep 会跳过该样本，防「端点故障」被学成「内容失宠」（2026-11-13）。
+    """
     c = conn or db.get_conn()
     return c.execute(
         """
         INSERT IGNORE INTO wpp_hf_ledger
           (account_id, inbound_msg_id, new_msg_id, group_id, from_wxid, msg_type, content_head,
            judge_overall, dim_r, dim_w, dim_s, dim_t, dim_c, effective_threshold, energy,
-           status, judged_at, created_at)
+           judge_degraded, status, judged_at, created_at)
         VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s,
-                'judged', %s, CURRENT_TIMESTAMP)
+                %s, 'judged', %s, CURRENT_TIMESTAMP)
         """,
         (account_id, inbound_msg_id, new_msg_id, group_id, from_wxid, msg_type,
          (content_head or "")[:512] or None, judge_overall, dim_r, dim_w, dim_s, dim_t,
-         dim_c, effective_threshold, energy, judged_at),
+         dim_c, effective_threshold, energy, 1 if judge_degraded else 0, judged_at),
     )
 
 

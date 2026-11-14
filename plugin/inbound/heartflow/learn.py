@@ -804,6 +804,7 @@ class HfLedgerRecord:
     dim_c: float | None = None
     effective_threshold: float | None = None
     energy: float | None = None
+    judge_degraded: int = 0
 
 
 def _insert_judged(record: HfLedgerRecord) -> None:
@@ -815,7 +816,7 @@ def _insert_judged(record: HfLedgerRecord) -> None:
         content_head=record.content_head, judge_overall=record.judge_overall,
         dim_r=record.dim_r, dim_w=record.dim_w, dim_s=record.dim_s, dim_t=record.dim_t,
         dim_c=record.dim_c, effective_threshold=record.effective_threshold,
-        energy=record.energy,
+        energy=record.energy, judge_degraded=record.judge_degraded,
     )
 
 

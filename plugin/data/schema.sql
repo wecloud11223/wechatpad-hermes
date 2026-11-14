@@ -199,6 +199,7 @@ CREATE TABLE IF NOT EXISTS wpp_hf_ledger (
   dim_c DECIMAL(5,2) NULL,                     -- continuity
   effective_threshold DECIMAL(6,4) NULL,       -- judge 时实际阈值 (0..1)
   energy DECIMAL(5,3) NULL,                    -- judge 前精力
+  judge_degraded TINYINT NOT NULL DEFAULT 0,   -- 1=本次判分走了兜底端点（模型不同源）⇒ 不进调阈统计
   status ENUM('judged','sent','suppressed','closed') NOT NULL DEFAULT 'judged',
   suppressed_reason VARCHAR(96) NULL,          -- dedup/ack-template/empty/no-deliver-outcome/send-failed
   engaged TINYINT(1) NULL,                     -- NULL=suppressed 排除样本外; 1=engaged; 0=ignored

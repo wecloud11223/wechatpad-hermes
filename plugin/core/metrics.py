@@ -163,7 +163,21 @@ def inc_judge_failure() -> None:
 
 def inc_judge_fallback() -> None:
     """主端点失败、兜底被启用。"""
+    global _judge_fallback_last_ts
+    _judge_fallback_last_ts = time.monotonic()
     inc_counter(COUNTER_JUDGE_FALLBACK)
+
+
+#: 最近一次「兜底被启用」的 monotonic 时刻（0 = 从未）。给心流落台账时标注
+#: ``judge_degraded`` 用：兜底模型与主模型分数不同源，这类样本进调阈统计会
+#: 把**端点故障**误读成**内容失宠**（2026-11-13 移动群/全员群 0.60→0.90 两日爬升
+#: 的根因）。单进程部署下够用；并发 judge 调用间理论上有毫秒级串扰，
+#: 消费方用 3s 新鲜度窗收敛。
+_judge_fallback_last_ts: float = 0.0
+
+
+def judge_fallback_last_ts() -> float:
+    return _judge_fallback_last_ts
 
 
 def inc_judge_fallback_ok() -> None:
